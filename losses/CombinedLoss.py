@@ -1,30 +1,41 @@
 import torch
 import torch.nn as nn
 from torchvision.models import mobilenet_v2, MobileNet_V2_Weights
+from utils.helpers import normalize_input
 
 class PerceptualLoss(nn.Module):
     def __init__(self):
         super(PerceptualLoss, self).__init__()
-        weights = MobileNet_V2_Weights.IMAGENET1K_V1  # Предобученные веса VGG16 на ImageNet
-        vgg = mobilenet_v2(weights=weights).features[:4]  # Берём первые 16 слоёв
-        for param in vgg.parameters():
-            param.requires_grad = False  # Замораживаем веса
-        self.vgg = vgg.eval()  # Устанавливаем режим оценки
+        weights = MobileNet_V2_Weights.IMAGENET1K_V1
+        mobilenet = mobilenet_v2(weights=weights).features[:4]
+        for param in mobilenet.parameters():
+            param.requires_grad = False
+        self.mobilenet = mobilenet.eval()
 
     def forward(self, input, target):
-        input_features = self.vgg(input)
-        target_features = self.vgg(target)
+        # Нормализуем входы для MobileNet
+        input = normalize_input(input)
+        target = normalize_input(target)
+
+        input_features = self.mobilenet(input)
+        target_features = self.mobilenet(target)
+
         return torch.nn.functional.mse_loss(input_features, target_features)
+
 
 
 from torchmetrics.functional import structural_similarity_index_measure as ssim
 
 def ssim_loss(input, target):
+    # Нормализуем входы в диапазон [0, 1]
+    input = normalize_input(input)
+    target = normalize_input(target)
     return 1 - ssim(input, target)
 
-def total_variation_loss(img):
-    return torch.sum(torch.abs(img[:, :, :-1] - img[:, :, 1:])) + \
-           torch.sum(torch.abs(img[:, :-1, :] - img[:, 1:, :]))
+def total_variation_loss(img, epsilon=1e-6):
+    diff_h = torch.abs(img[:, :, :-1] - img[:, :, 1:]) + epsilon
+    diff_w = torch.abs(img[:, :-1, :] - img[:, 1:, :]) + epsilon
+    return torch.sum(diff_h) + torch.sum(diff_w)
 
 class CombinedLoss(nn.Module):
     def __init__(self, perceptual_weight=0.1, ssim_weight=0.1, mse_weight=1.0, tv_weight=0.01):
@@ -42,7 +53,14 @@ class CombinedLoss(nn.Module):
         ssim_l = ssim_loss(output, target)
         tv = total_variation_loss(output)
 
-        return self.mse_weight * mse + \
-               self.perceptual_weight * perceptual + \
-               self.ssim_weight * ssim_l + \
-               self.tv_weight * tv
+        # Проверка на NaN
+        if torch.isnan(mse) or torch.isnan(perceptual) or torch.isnan(ssim_l) or torch.isnan(tv):
+            print(f"MSE: {mse}, Perceptual: {perceptual}, SSIM: {ssim_l}, TV: {tv}")
+            raise ValueError("NaN detected in loss components")
+
+        return (
+            self.mse_weight * mse +
+            self.perceptual_weight * perceptual +
+            self.ssim_weight * ssim_l +
+            self.tv_weight * tv
+        )

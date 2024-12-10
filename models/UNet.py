@@ -1,72 +1,77 @@
+
 import torch
 import torch.nn as nn
+from torch import optim, nn
+from torch.utils.data import DataLoader, random_split
 
-class UNet(nn.Module):
-    def __init__(self, num_groups=8):  # Добавляем параметр для количества групп в GroupNorm
-        super(UNet, self).__init__()
-
-        def down_block(in_channels, out_channels):
-            return nn.Sequential(
-                nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1),
-                nn.GroupNorm(num_groups, out_channels),  # Добавляем GroupNorm
-                nn.ReLU(inplace=True),
-                nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1),
-                nn.GroupNorm(num_groups, out_channels),  # Добавляем GroupNorm
-                nn.ReLU(inplace=True),
-                nn.MaxPool2d(kernel_size=2)
-            )
-
-        def up_block(in_channels, out_channels):
-            return nn.Sequential(
-                nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1),
-                nn.GroupNorm(num_groups, out_channels),  # Добавляем GroupNorm
-                nn.ReLU(inplace=True),
-                nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1),
-                nn.GroupNorm(num_groups, out_channels),  # Добавляем GroupNorm
-                nn.ReLU(inplace=True),
-                nn.ConvTranspose2d(out_channels, out_channels, kernel_size=2, stride=2)
-            )
-
-        # Энкодер
-        self.down1 = down_block(3, 64)
-        self.down2 = down_block(64, 128)
-        self.down3 = down_block(128, 256)
-        self.down4 = down_block(256, 512)
-
-        # Средний блок
-        self.middle = nn.Sequential(
-            nn.Conv2d(512, 1024, kernel_size=3, stride=1, padding=1),
-            nn.GroupNorm(num_groups, 1024),  # Добавляем GroupNorm
+class DoubleConv(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.conv_op = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
             nn.ReLU(inplace=True),
-            nn.Conv2d(1024, 1024, kernel_size=3, stride=1, padding=1),
-            nn.GroupNorm(num_groups, 1024),  # Добавляем GroupNorm
-            nn.ReLU(inplace=True),
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True)
         )
 
-        # Декодер
-        self.up4 = up_block(1024 + 512, 512)
-        self.up3 = up_block(512 + 256, 256)
-        self.up2 = up_block(256 + 128, 128)
-        self.up1 = up_block(128 + 64, 64)
-
-        # Финальный слой
-        self.final = nn.Conv2d(64, 3, kernel_size=1)
+    def forward(self, x):
+        return self.conv_op(x)
+    
+class DownSample(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.conv = DoubleConv(in_channels, out_channels)
+        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
 
     def forward(self, x):
-        # Энкодер
-        d1 = self.down1(x)  # [N, 64, H/2, W/2]
-        d2 = self.down2(d1)  # [N, 128, H/4, W/4]
-        d3 = self.down3(d2)  # [N, 256, H/8, W/8]
-        d4 = self.down4(d3)  # [N, 512, H/16, W/16]
+        down = self.conv(x)
+        p = self.pool(down)
 
-        # Средний блок
-        m = self.middle(d4)  # [N, 1024, H/16, W/16]
+        return down, p
+    
+class UpSample(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.up = nn.ConvTranspose2d(in_channels, in_channels//2, kernel_size=2, stride=2)
+        self.conv = DoubleConv(in_channels, out_channels)
 
-        # Декодер
-        u4 = self.up4(torch.cat([m, d4], dim=1))  # [N, 512, H/8, W/8]
-        u3 = self.up3(torch.cat([u4, d3], dim=1))  # [N, 256, H/4, W/4]
-        u2 = self.up2(torch.cat([u3, d2], dim=1))  # [N, 128, H/2, W/2]
-        u1 = self.up1(torch.cat([u2, d1], dim=1))  # [N, 64, H, W]
+    def forward(self, x1, x2):
+        x1 = self.up(x1)
+        x = torch.cat([x1, x2], 1)
+        return self.conv(x)
+    
+class UNet(nn.Module):
+    def __init__(self, in_channels, output_channels):
+        super().__init__()
+        self.down_convolution_1 = DownSample(in_channels, 64)
+        self.down_convolution_2 = DownSample(64, 128)
+        self.down_convolution_3 = DownSample(128, 256)
+        self.down_convolution_4 = DownSample(256, 512)
 
-        # Финальный слой
-        return self.final(u1)  # [N, 3, H, W]
+        self.bottle_neck = DoubleConv(512, 1024)
+
+        self.up_convolution_1 = UpSample(1024, 512)
+        self.up_convolution_2 = UpSample(512, 256)
+        self.up_convolution_3 = UpSample(256, 128)
+        self.up_convolution_4 = UpSample(128, 64)
+
+        self.out = nn.Sequential(
+            nn.Conv2d(in_channels=64, out_channels=output_channels, kernel_size=1),
+            nn.Tanh()  # или nn.Sigmoid(), в зависимости от диапазона
+        )
+
+    def forward(self, x):
+        down_1, p1 = self.down_convolution_1(x)
+        down_2, p2 = self.down_convolution_2(p1)
+        down_3, p3 = self.down_convolution_3(p2)
+        down_4, p4 = self.down_convolution_4(p3)
+
+        b = self.bottle_neck(p4)
+
+        up_1 = self.up_convolution_1(b, down_4)
+        up_2 = self.up_convolution_2(up_1, down_3)
+        up_3 = self.up_convolution_3(up_2, down_2)
+        up_4 = self.up_convolution_4(up_3, down_1)
+
+        out = self.out(up_4)
+        return out
