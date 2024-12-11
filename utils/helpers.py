@@ -6,7 +6,7 @@ from PIL import Image
 # Настройки
 IMAGE_SIZE = 256  # Размер для ресайза изображений
 DATA_DIR = "../dataset"  # Путь к папке с данными
-BATCH_SIZE = 8  # Размер батча
+BATCH_SIZE = 4  # Размер батча
 
 # Нормализация в диапазоне [-1, 1]
 transform = transforms.Compose([
