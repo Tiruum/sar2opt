@@ -5,12 +5,15 @@ from torch import optim, nn
 from torch.utils.data import DataLoader, random_split
 
 class DoubleConv(nn.Module):
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels, use_instancenorm=True):
         super().__init__()
+        # norm_layer = nn.InstanceNorm2d(out_channels) if use_instancenorm else nn.BatchNorm2d(out_channels)
         self.conv_op = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
+            # norm_layer,
             nn.ReLU(inplace=True),
             nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
+            # norm_layer,
             nn.ReLU(inplace=True)
         )
 
