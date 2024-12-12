@@ -100,7 +100,8 @@ def train_gan(train_loader, generator, discriminator, g_optimizer, d_optimizer, 
 # Запуск тренировки
 if __name__ == "__main__":
     # Настройки
-    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    DEVICE = torch.device("mps" if torch.backends.mps.is_available() else "gpu" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {DEVICE}")
     EPOCHS = 200  # Количество эпох
     LEARNING_RATE = 1e-5  # Скорость обучения
     SAVE_MODEL_PATH = f"{project_root}/saved_models"  # Папка для сохранения модели

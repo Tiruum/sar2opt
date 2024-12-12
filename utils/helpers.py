@@ -6,7 +6,7 @@ from PIL import Image
 # Настройки
 IMAGE_SIZE = 256  # Размер для ресайза изображений
 DATA_DIR = os.path.abspath(os.path.join(os.getcwd(), 'dataset'))  # Путь к папке с данными
-BATCH_SIZE = 4  # Размер батча
+BATCH_SIZE = 16  # Размер батча
 
 # Нормализация в диапазоне [-1, 1]
 transform = transforms.Compose([
