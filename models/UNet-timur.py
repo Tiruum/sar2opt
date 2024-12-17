@@ -1,9 +1,12 @@
+
 import torch
 import torch.nn as nn
+from torch import optim, nn
+from torch.utils.data import DataLoader, random_split
 
-class SelfAttention(nn.Module):
+class AttentionBlock(nn.Module):
     def __init__(self, in_channels):
-        super(SelfAttention, self).__init__()
+        super(AttentionBlock, self).__init__()
         self.query = nn.Conv2d(in_channels, in_channels // 8, 1)
         self.key = nn.Conv2d(in_channels, in_channels // 8, 1)
         self.value = nn.Conv2d(in_channels, in_channels, 1)
@@ -18,23 +21,24 @@ class SelfAttention(nn.Module):
         out = torch.bmm(value, attention.permute(0, 2, 1)).view(batch, C, H, W)
         return self.gamma * out + x
 
-
 class DoubleConv(nn.Module):
-    def __init__(self, in_channels, out_channels, use_dropout=False, dropout_rate=0.5):
+    def __init__(self, in_channels, out_channels, use_instancenorm=True):
         super().__init__()
-        layers = [
+        # norm_layer = nn.InstanceNorm2d(out_channels) if use_instancenorm else nn.BatchNorm2d(out_channels)
+        self.conv_op = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
+            # norm_layer,
+            nn.Dropout(0.2),
             nn.ReLU(inplace=True),
             nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-        ]
-        if use_dropout:  # Добавляем Dropout, если нужно
-            layers.append(nn.Dropout(dropout_rate))
-        self.conv_op = nn.Sequential(*layers)
+            # norm_layer,
+            nn.Dropout(0.2),
+            nn.ReLU(inplace=True)
+        )
 
     def forward(self, x):
         return self.conv_op(x)
-
+    
 class DownSample(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
@@ -44,19 +48,20 @@ class DownSample(nn.Module):
     def forward(self, x):
         down = self.conv(x)
         p = self.pool(down)
-        return down, p
 
+        return down, p
+    
 class UpSample(nn.Module):
-    def __init__(self, in_channels, out_channels, use_dropout=False):
+    def __init__(self, in_channels, out_channels):
         super().__init__()
-        self.up = nn.ConvTranspose2d(in_channels, in_channels // 2, kernel_size=2, stride=2)
-        self.conv = DoubleConv(in_channels, out_channels, use_dropout=use_dropout, dropout_rate=0.5)
+        self.up = nn.ConvTranspose2d(in_channels, in_channels//2, kernel_size=2, stride=2)
+        self.conv = DoubleConv(in_channels, out_channels)
 
     def forward(self, x1, x2):
         x1 = self.up(x1)
-        x = torch.cat([x1, x2], dim=1)
+        x = torch.cat([x1, x2], 1)
         return self.conv(x)
-
+    
 class UNet(nn.Module):
     def __init__(self, in_channels, output_channels):
         super().__init__()
@@ -66,16 +71,16 @@ class UNet(nn.Module):
         self.down_convolution_4 = DownSample(256, 512)
 
         self.bottle_neck = DoubleConv(512, 1024)
+        self.attention = AttentionBlock(1024)
 
-        # В блоках апсемплинга добавляем Dropout
-        self.up_convolution_1 = UpSample(1024, 512, use_dropout=True)
-        self.up_convolution_2 = UpSample(512, 256, use_dropout=True)
-        self.up_convolution_3 = UpSample(256, 128, use_dropout=True)
-        self.up_convolution_4 = UpSample(128, 64, use_dropout=False)
+        self.up_convolution_1 = UpSample(1024, 512)
+        self.up_convolution_2 = UpSample(512, 256)
+        self.up_convolution_3 = UpSample(256, 128)
+        self.up_convolution_4 = UpSample(128, 64)
 
         self.out = nn.Sequential(
             nn.Conv2d(in_channels=64, out_channels=output_channels, kernel_size=1),
-            nn.Tanh()
+            nn.Tanh()  # или nn.Sigmoid(), в зависимости от диапазона
         )
 
     def forward(self, x):

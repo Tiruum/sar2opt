@@ -1,94 +1,102 @@
 import os
 import torch
-from torch.utils.data import Dataset
-import torchvision.transforms as T
+from torch.utils.data import Dataset, DataLoader
+from torchvision import transforms
 from PIL import Image
+import torch.nn.functional as F
 import numpy as np
-import matplotlib.pyplot as plt
+from scipy.ndimage import median_filter
 
-class CustomDataset(Dataset):
-    def __init__(self, root_dir, transform=None):
-        self.root_dir = root_dir
+# Настройки
+IMAGE_SIZE = 256  # Размер для ресайза изображений
+DATA_DIR = "./dataset"  # Путь к папке с данными
+BATCH_SIZE = 8  # Размер батча
+
+# --- Фильтр Собеля ---
+def sobel_filter(image):
+    """Функция для применения фильтра Собеля."""
+    sobel_x = torch.tensor([[-1, 0, 1],
+                            [-2, 0, 2],
+                            [-1, 0, 1]], dtype=torch.float32).unsqueeze(0).unsqueeze(0)  # 1x1x3x3
+    sobel_y = torch.tensor([[-1, -2, -1],
+                            [0, 0, 0],
+                            [1, 2, 1]], dtype=torch.float32).unsqueeze(0).unsqueeze(0)  # 1x1x3x3
+    
+    image = image.unsqueeze(0)  # Добавляем batch dimension
+    
+    # Применяем свертку с ядрами Собеля
+    edge_x = F.conv2d(image, sobel_x, padding=1)
+    edge_y = F.conv2d(image, sobel_y, padding=1)
+    
+    # Суммируем градиенты
+    edges = torch.sqrt(edge_x**2 + edge_y**2).squeeze(0)  # Возвращаем размер [1, H, W]
+    return edges
+
+# --- Медианный фильтр ---
+def apply_median_filter(image_tensor, kernel_size=3):
+    """Функция для применения медианного фильтра."""
+    image_np = image_tensor.squeeze(0).numpy()  # Переводим из Tensor в numpy
+    filtered = median_filter(image_np, size=kernel_size)
+    return torch.tensor(filtered, dtype=torch.float32).unsqueeze(0)  # Возвращаем Tensor с размером [1, H, W]
+
+# Трансформации
+transform = transforms.Compose([
+    transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
+    transforms.ToTensor(),  # Преобразование [0, 255] -> [0, 1]
+    transforms.Normalize(mean=(0.5,), std=(0.5,))  # Преобразование [0, 1] -> [-1, 1]
+])
+
+# Датасет
+class SARToOpticalDataset(Dataset):
+    def __init__(self, sar_dir, optical_dir, transform=None):
+        self.sar_dir = sar_dir
+        self.optical_dir = optical_dir
         self.transform = transform
-        self.images_A = sorted(os.listdir(os.path.join(root_dir, 'trainA')))
-        self.images_B = sorted(os.listdir(os.path.join(root_dir, 'trainB')))
+        self.sar_images = os.listdir(sar_dir)
+        self.optical_images = os.listdir(optical_dir)
 
     def __len__(self):
-        return len(self.images_A)
+        return len(self.sar_images)
 
     def __getitem__(self, idx):
-        imgA_path = os.path.join(self.root_dir, 'trainA', self.images_A[idx])
-        imgB_path = os.path.join(self.root_dir, 'trainB', self.images_B[idx])
-        imgA = Image.open(imgA_path).convert("RGB")
-        imgB = Image.open(imgB_path).convert("RGB")
-
+        # Загружаем SAR-изображение
+        sar_path = os.path.join(self.sar_dir, self.sar_images[idx])
+        sar_image = Image.open(sar_path).convert("L")  # Ч/б изображение
+        
+        # Загружаем оптическое изображение
+        optical_path = os.path.join(self.optical_dir, self.optical_images[idx])
+        optical_image = Image.open(optical_path).convert("RGB")  # Цветное изображение
+        
         if self.transform:
-            imgA = self.transform(imgA)
-            imgB = self.transform(imgB)
+            sar_image = self.transform(sar_image)
+            optical_image = self.transform(optical_image)
+            
+            # Применяем фильтры к SAR-изображению
+            sar_image = apply_median_filter(sar_image)  # Медианный фильтр
+            sar_image = sobel_filter(sar_image)  # Фильтр Собеля
+        
+        return sar_image, optical_image
 
-        return imgA, imgB
+# Создаём экземпляры датасетов
+train_dataset = SARToOpticalDataset(
+    sar_dir=os.path.join(DATA_DIR, "trainA"),
+    optical_dir=os.path.join(DATA_DIR, "trainB"),
+    transform=transform
+)
 
-def visualize_results(input_image, generated_image, target_image):
-    # Обратная нормализация
-    unnormalize = T.Normalize((-1, -1, -1), (2, 2, 2))
-    input_image = unnormalize(input_image)
-    generated_image = unnormalize(generated_image)
-    target_image = unnormalize(target_image)
+test_dataset = SARToOpticalDataset(
+    sar_dir=os.path.join(DATA_DIR, "testA"),
+    optical_dir=os.path.join(DATA_DIR, "testB"),
+    transform=transform
+)
 
-    # Преобразование из тензоров в изображения
-    input_image = input_image.permute(1, 2, 0).cpu().numpy()
-    generated_image = generated_image.permute(1, 2, 0).detach().cpu().numpy()
-    target_image = target_image.permute(1, 2, 0).cpu().numpy()
+# DataLoader для батчей
+train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
+test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False)
 
-    # Отображение
-    plt.figure(figsize=(12, 4))
-    plt.subplot(1, 3, 1)
-    plt.imshow(input_image)
-    plt.title("Radar Image")
-    plt.axis("off")
-
-    plt.subplot(1, 3, 2)
-    plt.imshow(generated_image)
-    plt.title("Generated Optical Image")
-    plt.axis("off")
-
-    plt.subplot(1, 3, 3)
-    plt.imshow(target_image)
-    plt.title("Target Optical Image")
-    plt.axis("off")
-
-    plt.show()
-
-def save_best_model(epoch, model, optimizer, loss, filepath):
-    torch.save({
-        'epoch': epoch,
-        'model_state_dict': model.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict(),
-        'loss': loss,
-    }, filepath)
-    print(f"Best model saved at epoch {epoch} with loss {loss:.4f}")
-
-def load_checkpoint(filepath, model, optimizer=None):
-    checkpoint = torch.load(filepath)  # Загрузка данных чекпоинта
-    model.load_state_dict(checkpoint['model_state_dict'])  # Восстановление весов модели
-    if optimizer:  # Если требуется восстановить оптимизатор
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-    epoch = checkpoint['epoch']  # Последняя сохранённая эпоха
-    loss = checkpoint['loss']  # Последняя сохранённая функция потерь
-    print(f"Модель загружена: epoch {epoch}, loss {loss}")
-    return epoch
-
-def save_loss_history(train_loss_history, test_loss_history, filepath):
-    np.savez(filepath, train_loss=train_loss_history, test_loss=test_loss_history)
-    print(f"Loss history saved to {filepath}")
-
-def load_loss_history(filepath):
-    try:
-        data = np.load(filepath)
-        train_loss = data['train_loss'].tolist()  # Преобразуем обратно в список
-        test_loss = data['test_loss'].tolist()  # Преобразуем обратно в список
-        print(f"Loss history loaded from {filepath}")
-        return train_loss, test_loss
-    except FileNotFoundError:
-        print(f"Loss history ({filepath}) не найдена, начинаем сначала.")
-        return [], []
+# Проверка работы
+if __name__ == "__main__":
+    for sar, optical in train_loader:
+        print(f"SAR batch shape: {sar.shape}")
+        print(f"Optical batch shape: {optical.shape}")
+        break
