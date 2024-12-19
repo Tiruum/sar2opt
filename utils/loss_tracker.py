@@ -1,7 +1,7 @@
 import numpy as np
 import os
 
-def save_losses(train_losses, val_losses, log_path):
+def save_losses(train_losses, val_losses, log_path=f'{os.getcwd()}/logs'):
     """
     Сохраняет потери в формате .npz для последующего анализа.
     
