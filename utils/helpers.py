@@ -1,4 +1,6 @@
 import os
+from torch.utils.data import Dataset, DataLoader
+from torchvision import transforms
 import torch
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
@@ -56,6 +58,7 @@ class SARToOpticalDataset(Dataset):
         self.optical_images = os.listdir(optical_dir)
 
     def __len__(self):
+        return len(self.sar_images)
         return len(self.sar_images)
 
     def __getitem__(self, idx):
