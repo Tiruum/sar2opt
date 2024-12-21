@@ -1,9 +1,7 @@
 import numpy as np
 import os
 
-def save_losses(log_path=f'{os.getcwd()}/logs/losses.npz', **losses):
-    if log_path is None:
-        log_path = os.path.join(os.getcwd(), 'logs')
+def save_losses(log_path=os.path.join(os.getcwd(), 'logs'), **losses):
     """
     Сохраняет потери в формате .npz для последующего анализа.
     
@@ -12,7 +10,7 @@ def save_losses(log_path=f'{os.getcwd()}/logs/losses.npz', **losses):
     - losses (dict): Произвольное количество переменных для сохранения.
     """
     os.makedirs(log_path, exist_ok=True)
-    file_path = os.path.join(log_path, "losses.npz")
+    file_path = f'{log_path}/losses.npz'
     np.savez(file_path, **losses)
 
 def load_losses(log_path=f'{os.getcwd()}/logs/losses.npz'):

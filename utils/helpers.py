@@ -13,7 +13,7 @@ import random
 # Настройки
 IMAGE_SIZE = 256  # Размер для ресайза изображений
 DATA_DIR = "./dataset"  # Путь к папке с данными
-BATCH_SIZE = 16  # Размер батча
+BATCH_SIZE = 8  # Размер батча
 
 def crop_black_borders(image, rotation_angle):
     width, height = image.size
@@ -35,16 +35,15 @@ def crop_black_borders(image, rotation_angle):
     cropped_image = image.crop((left, upper, right, lower))
     return cropped_image
 
-# Функция для применения медианного фильтра и Лапласа
-def preprocess_with_laplace(image):
-    image = image.filter(ImageFilter.MedianFilter(size=5))      # Применяем медианный фильтр
-    
-    img_np = np.array(image, dtype=np.uint8)                    # Конвертируем в numpy для фильтра Лапласа
-    
-    laplace_filtered = cv2.Laplacian(img_np, cv2.CV_64F)        # Фильтр Лапласа
-    laplace_filtered = np.uint8(np.absolute(laplace_filtered))  # Абсолютные значения
-    
-    return img_np, laplace_filtered                             # Возвращаем исходное и фильтрованное изображение
+class InMemoryDataset(Dataset):
+    def __init__(self, dataset):
+        self.data = [dataset[i] for i in range(len(dataset))]
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        return self.data[idx]
 
 class Augmentation:
     """
@@ -93,8 +92,14 @@ class SARToOpticalDataset(Dataset):
         self.optical_dir = optical_dir
         self.transform = transform
         self.augment = augment
-        self.sar_images = sorted(os.listdir(sar_dir))
-        self.optical_images = sorted(os.listdir(optical_dir))
+
+        # Фильтрация только файлов, исключая директории и скрытые файлы
+        self.sar_images = sorted(
+            [f for f in os.listdir(sar_dir) if os.path.isfile(os.path.join(sar_dir, f)) and not f.startswith(".")]
+        )
+        self.optical_images = sorted(
+            [f for f in os.listdir(optical_dir) if os.path.isfile(os.path.join(optical_dir, f)) and not f.startswith(".")]
+        )
 
     def __len__(self):
         return len(self.sar_images)
@@ -103,28 +108,22 @@ class SARToOpticalDataset(Dataset):
         # Загружаем SAR-изображение
         sar_path = os.path.join(self.sar_dir, self.sar_images[idx])
         sar_image = Image.open(sar_path).convert("L")  # Ч/б изображение
-        
-        # Получаем исходное и Laplace-фильтрованное изображение
-        sar_np, laplace_filtered = preprocess_with_laplace(sar_image)
-        
-        # Объединяем SAR и Laplace по каналу
-        combined_sar = np.stack([sar_np, laplace_filtered], axis=-1)            # (H, W, 2)
-        combined_sar = Image.fromarray(combined_sar)                            # Конвертируем в PIL
 
         # Загружаем оптическое изображение
         optical_path = os.path.join(self.optical_dir, self.optical_images[idx])
-        optical_image = Image.open(optical_path).convert("RGB")                 # Цветное изображение
+        optical_image = Image.open(optical_path).convert("RGB")  # Цветное изображение
 
         # Применяем совместимые аугментации, если таковые есть
         if self.augment:
-            combined_sar, optical_image = self.augment(combined_sar, optical_image)
+            sar_image, optical_image = self.augment(sar_image, optical_image)
 
         # Применяем трансформации, если таковые есть
         if self.transform:
-            combined_sar = self.transform(combined_sar)
+            sar_image = self.transform(sar_image)
             optical_image = self.transform(optical_image)
 
-        return combined_sar, optical_image
+        return sar_image, optical_image
+
 
 # Создаём экземпляры датасетов
 train_augment = Augmentation(rotation_degree=15, horizontal_flip=True, vertical_flip=True)
@@ -142,9 +141,11 @@ test_dataset = SARToOpticalDataset(
     transform=transform
 )
 
+# train_dataset_in_memory = InMemoryDataset(train_dataset)
+
 # DataLoader для батчей
-train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4)
-test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4)
+train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4, pin_memory=True, persistent_workers=True, prefetch_factor=2)
+test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True, prefetch_factor=2)
 
 # Проверка работы
 if __name__ == "__main__":
