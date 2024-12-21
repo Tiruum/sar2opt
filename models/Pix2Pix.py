@@ -1,7 +1,8 @@
 import torch
 import torch.nn as nn
 import os
-from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch.optim.lr_scheduler import LambdaLR
+import datetime
 
 
 
@@ -180,17 +181,40 @@ class Pix2PixGAN(nn.Module):
         self.optimizer_G = torch.optim.AdamW(self.generator.parameters(), lr=0.0002, betas=(0.5, 0.999))
         self.optimizer_D = torch.optim.AdamW(self.discriminator.parameters(), lr=0.0002, betas=(0.5, 0.999))
 
-        self.scheduler_G = ReduceLROnPlateau(self.optimizer_G, mode='min', factor=0.5, patience=10)
-        self.scheduler_D = ReduceLROnPlateau(self.optimizer_D, mode='min', factor=0.5, patience=10)
-
-        self.criterion_GAN = nn.BCEWithLogitsLoss()
+        self.criterion_GAN = nn.MSELoss()
         self.criterion_L1 = nn.L1Loss()
+
+        self.l1_lambda = 50
+
+        # Сохраним параметры для линейного decay
+        self.max_epochs = max_epochs
+        self.start_decay_epoch = start_decay_epoch
+
+        def linear_decay(current_epoch):
+            if current_epoch < self.start_decay_epoch:
+                return 1.0
+            else:
+                remaining = self.max_epochs - self.start_decay_epoch
+                passed = current_epoch - self.start_decay_epoch
+                ratio = 1.0 - (passed / float(remaining))
+                return max(ratio, 0.0)
+
+        # Ставим лямбда-шедулер для линейного decay
+        self.scheduler_G = LambdaLR(
+            self.optimizer_G, 
+            lr_lambda=lambda e: linear_decay(e)
+        )
+        self.scheduler_D = LambdaLR(
+            self.optimizer_D, 
+            lr_lambda=lambda e: linear_decay(e)
+        )
 
     def train_step(self, real_A, real_B):
         real_A, real_B = real_A.to(self.device), real_B.to(self.device)
 
         # Train Discriminator
         self.optimizer_D.zero_grad()
+
         fake_B = self.generator(real_A)
 
         # Получаем выходные данные дискриминатора
@@ -204,23 +228,25 @@ class Pix2PixGAN(nn.Module):
         # Вычисляем потери
         loss_D_real = self.criterion_GAN(output_real, target_real)
         loss_D_fake = self.criterion_GAN(output_fake, target_fake)
-        loss_D = (loss_D_real + loss_D_fake) / 2
+        loss_D = (loss_D_real + loss_D_fake) * 0.5
         loss_D.backward()
         self.optimizer_D.step()
 
         # Train Generator
         self.optimizer_G.zero_grad()
-        loss_G_GAN = self.criterion_GAN(self.discriminator(real_A, fake_B), torch.ones_like(output_real))
-        loss_G_L1 = self.criterion_L1(fake_B, real_B) * 100
+
+        output_fake_for_G = self.discriminator(real_A, fake_B)
+        loss_G_GAN = self.criterion_GAN(output_fake_for_G, torch.ones_like(output_fake_for_G))
+        loss_G_L1 = self.criterion_L1(fake_B, real_B) * self.l1_lambda
         loss_G = loss_G_GAN + loss_G_L1
         loss_G.backward()
         self.optimizer_G.step()
 
         return loss_D.item(), loss_G.item()
 
-    def step_schedulers(self, loss_G, loss_D):
-        self.scheduler_G.step(loss_G)
-        self.scheduler_D.step(loss_D)
+    def step_schedulers(self):
+        self.scheduler_G.step()
+        self.scheduler_D.step()
 
     # Метод для сохранения состояния модели
     def save_state(self, epoch, checkpoint_path=os.path.join(os.getcwd(), 'checkpoints')):
@@ -247,7 +273,6 @@ class Pix2PixGAN(nn.Module):
         os.makedirs(checkpoint_path, exist_ok=True)
         checkpoint_file = os.path.join(checkpoint_path, f"checkpoint_epoch_{epoch+1}.pth")
         torch.save(checkpoint, checkpoint_file)
-        print(f"Сохранён чекпоинт: {checkpoint_file}")
 
     # Метод для загрузки состояния модели
     def load_state(self, checkpoint_name, device):
