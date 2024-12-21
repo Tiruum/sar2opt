@@ -126,7 +126,7 @@ class SARToOpticalDataset(Dataset):
 
 
 # Создаём экземпляры датасетов
-train_augment = Augmentation(rotation_degree=15, horizontal_flip=True, vertical_flip=True)
+train_augment = Augmentation(rotation_degree=10, horizontal_flip=True, vertical_flip=True)
 
 train_dataset = SARToOpticalDataset(
     sar_dir=os.path.join(DATA_DIR, "trainA"),
@@ -144,8 +144,8 @@ test_dataset = SARToOpticalDataset(
 # train_dataset_in_memory = InMemoryDataset(train_dataset)
 
 # DataLoader для батчей
-train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=4, pin_memory=True, persistent_workers=True, prefetch_factor=2)
-test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=4, pin_memory=True, persistent_workers=True, prefetch_factor=2)
+train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=os.cpu_count()//2, pin_memory=True, persistent_workers=True, prefetch_factor=2)
+test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=os.cpu_count()//2, pin_memory=True, persistent_workers=True, prefetch_factor=2)
 
 # Проверка работы
 if __name__ == "__main__":
