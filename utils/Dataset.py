@@ -9,11 +9,14 @@ import cv2
 import numpy as np
 from scipy.ndimage import median_filter
 import random
+from torch.utils.data import Subset
+from utils.ConfigLoader import ConfigLoader
+config = ConfigLoader()
 
 # Настройки
-IMAGE_SIZE = 256  # Размер для ресайза изображений
+IMAGE_SIZE = config.get('dataset', 'image_size')  # Размер для ресайза изображений
 DATA_DIR = "./dataset"  # Путь к папке с данными
-BATCH_SIZE = 8  # Размер батча
+BATCH_SIZE = config.get('dataset', 'batch_size') # Размер батча
 
 def crop_black_borders(image, rotation_angle):
     width, height = image.size
@@ -126,7 +129,9 @@ class SARToOpticalDataset(Dataset):
 
 
 # Создаём экземпляры датасетов
-train_augment = Augmentation(rotation_degree=10, horizontal_flip=True, vertical_flip=True)
+train_augment = None
+if config.get('dataset', 'use_augments'):
+    train_augment = Augmentation(rotation_degree=10, horizontal_flip=True, vertical_flip=True)
 
 train_dataset = SARToOpticalDataset(
     sar_dir=os.path.join(DATA_DIR, "trainA"),
@@ -141,7 +146,21 @@ test_dataset = SARToOpticalDataset(
     transform=transform
 )
 
-# train_dataset_in_memory = InMemoryDataset(train_dataset)
+load_dataset_to_memory = False
+reduce_dataset_factor = 4
+
+if config.get('dataset', 'load_dataset_to_memory'):
+    train_dataset = InMemoryDataset(train_dataset)
+
+if config.get('dataset', 'reduce_dataset_factor') != 0:
+    # Уменьшаем размер датасета в 4 раза
+    dataset_size = len(train_dataset)
+    indices = np.arange(dataset_size)  # Создаем массив индексов
+    np.random.shuffle(indices)  # Перемешиваем индексы для случайного выбора
+    reduced_indices = indices[:dataset_size // config.get('dataset', 'reduce_dataset_factor')]  # Берем только 1/reduce_dataset_factor часть индексов
+
+    # Создаем подмножество
+    train_dataset = Subset(train_dataset, reduced_indices)
 
 # DataLoader для батчей
 train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=os.cpu_count()//2, pin_memory=True, persistent_workers=True, prefetch_factor=2)

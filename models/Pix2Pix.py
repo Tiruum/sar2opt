@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import os
-from torch.optim.lr_scheduler import LambdaLR
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 import datetime
 
 
@@ -172,7 +172,7 @@ if __name__ == '__main__':
 #  |_|   |_/_/\_\____|_|   |_/_/\_\
 
 class Pix2PixGAN(nn.Module):
-    def __init__(self, device, max_epochs=200, start_decay_epoch=100):
+    def __init__(self, device):
         super(Pix2PixGAN, self).__init__()
         self.device = device
         self.generator = UNetGenerator().to(self.device)
@@ -186,27 +186,19 @@ class Pix2PixGAN(nn.Module):
 
         self.l1_lambda = 50
 
-        # Сохраним параметры для линейного decay
-        self.max_epochs = max_epochs
-        self.start_decay_epoch = start_decay_epoch
-
-        def linear_decay(current_epoch):
-            if current_epoch < self.start_decay_epoch:
-                return 1.0
-            else:
-                remaining = self.max_epochs - self.start_decay_epoch
-                passed = current_epoch - self.start_decay_epoch
-                ratio = 1.0 - (passed / float(remaining))
-                return max(ratio, 0.0)
-
-        # Ставим лямбда-шедулер для линейного decay
-        self.scheduler_G = LambdaLR(
+        self.scheduler_G = ReduceLROnPlateau(
             self.optimizer_G, 
-            lr_lambda=lambda e: linear_decay(e)
+            mode='min', 
+            factor=0.5, 
+            patience=5,
+            min_lr=1e-6
         )
-        self.scheduler_D = LambdaLR(
+        self.scheduler_D = ReduceLROnPlateau(
             self.optimizer_D, 
-            lr_lambda=lambda e: linear_decay(e)
+            mode='min', 
+            factor=0.5, 
+            patience=5,
+            min_lr=1e-6
         )
 
     def train_step(self, real_A, real_B):
@@ -244,18 +236,21 @@ class Pix2PixGAN(nn.Module):
 
         return loss_D.item(), loss_G.item()
 
-    def step_schedulers(self):
-        self.scheduler_G.step()
-        self.scheduler_D.step()
+    def step_schedulers(self, loss_D, loss_G):
+        """
+        Шаг для ReduceLROnPlateau. Передаем потери дискриминатора и генератора.
+        """
+        self.scheduler_D.step(loss_D)
+        self.scheduler_G.step(loss_G)
 
     # Метод для сохранения состояния модели
-    def save_state(self, epoch, checkpoint_path=os.path.join(os.getcwd(), 'checkpoints')):
+    def save_state(self, epoch, save_dir=os.path.join(os.getcwd(), 'checkpoints')):
         """
         Сохраняет состояние модели, включая параметры генератора, дискриминатора, оптимизаторов и шедулеров.
 
         Аргументы:
             epoch (int): Номер текущей эпохи.
-            checkpoint_path (str): Путь для сохранения контрольной точки.
+            save_dir (str): Путь для сохранения контрольной точки.
 
         Возвращает:
             None
@@ -270,8 +265,8 @@ class Pix2PixGAN(nn.Module):
             'scheduler_D_state_dict': self.scheduler_D.state_dict(),
             'date': datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
         }
-        os.makedirs(checkpoint_path, exist_ok=True)
-        checkpoint_file = os.path.join(checkpoint_path, f"checkpoint_epoch_{epoch+1}.pth")
+        os.makedirs(save_dir, exist_ok=True)
+        checkpoint_file = os.path.join(save_dir, f"checkpoint_epoch_{epoch+1}.pth")
         torch.save(checkpoint, checkpoint_file)
 
     # Метод для загрузки состояния модели
@@ -286,13 +281,13 @@ class Pix2PixGAN(nn.Module):
         Возвращает:
             start_epoch (int): Эпоха, с которой можно продолжить обучение.
         """
-        checkpoint_path = os.path.join(os.getcwd(), f'checkpoints/{checkpoint_name}.pth')
-        if not os.path.isfile(checkpoint_path):
-            print(f"Чекпоинт не найден по пути: {checkpoint_path}")
+        save_dir = os.path.join(os.getcwd(), f'checkpoints/{checkpoint_name}.pth')
+        if not os.path.isfile(save_dir):
+            print(f"Чекпоинт не найден по пути: {save_dir}")
             print("Начинаем обучение с нуля.")
             return 0
 
-        checkpoint = torch.load(checkpoint_path, map_location=device)
+        checkpoint = torch.load(save_dir, map_location=device)
 
         # Восстанавливаем состояния генератора и дискриминатора
         self.generator.load_state_dict(checkpoint['generator_state_dict'])
@@ -309,7 +304,7 @@ class Pix2PixGAN(nn.Module):
         start_epoch = checkpoint.get('epoch', 0)
         date_saved = checkpoint.get('date', "Неизвестно")
 
-        print(f"Чекпоинт успешно загружен: {checkpoint_path}")
+        print(f"Чекпоинт успешно загружен: {save_dir}")
         print(f"Дата сохранения: {date_saved}, эпоха {start_epoch+1}")
 
         return start_epoch
