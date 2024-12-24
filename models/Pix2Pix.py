@@ -171,8 +171,10 @@ if __name__ == '__main__':
 #  | |   | |>  < / /_| |   | |>  < 
 #  |_|   |_/_/\_\____|_|   |_/_/\_\
 
+from utils.ConfigLoader import ConfigLoader
+config = ConfigLoader()
 class Pix2PixGAN(nn.Module):
-    def __init__(self, device):
+    def __init__(self, device, l1_lambda=config.get('training', 'l1_lambda')):
         super(Pix2PixGAN, self).__init__()
         self.device = device
         self.generator = UNetGenerator().to(self.device)
@@ -184,7 +186,7 @@ class Pix2PixGAN(nn.Module):
         self.criterion_GAN = nn.MSELoss()
         self.criterion_L1 = nn.L1Loss()
 
-        self.l1_lambda = 50
+        self.l1_lambda = l1_lambda
 
         self.scheduler_G = ReduceLROnPlateau(
             self.optimizer_G, 

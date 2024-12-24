@@ -1,6 +1,6 @@
 {
     "model": {
-        "device": "mps",
+        "device": "cuda",
         "end_epoch": 400,
         "load_model": false
     },
@@ -19,7 +19,8 @@
         "image_size": 256,
         "batch_size": 16,
         "load_dataset_to_memory": false,
-        "reduce_dataset_factor": 4,
-        "num_workers": 6
+        "reduce_dataset_factor": 0,
+        "num_workers": 6,
+        "use_augments": true
     }
 }
