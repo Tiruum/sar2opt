@@ -126,7 +126,7 @@ if __name__ == "__main__":
 
 
 class Pix2PixGAN(nn.Module):
-    def __init__(self, device, l1_lambda=50):
+    def __init__(self, device, l1_lambda=15):
         super(Pix2PixGAN, self).__init__()
         self.device = device
         self.generator = Generator().to(self.device)
@@ -135,7 +135,7 @@ class Pix2PixGAN(nn.Module):
         self.optimizer_G = torch.optim.AdamW(self.generator.parameters(), lr=0.0002, betas=(0.5, 0.999))
         self.optimizer_D = torch.optim.AdamW(self.discriminator.parameters(), lr=0.0002, betas=(0.5, 0.999))
 
-        self.criterion_GAN = nn.BCEWithLogitsLoss()
+        self.criterion_GAN = nn.MSELoss()
         self.criterion_L1 = nn.L1Loss()
 
         self.l1_lambda = l1_lambda
@@ -143,15 +143,15 @@ class Pix2PixGAN(nn.Module):
         self.scheduler_G = ReduceLROnPlateau(
             self.optimizer_G, 
             mode='min', 
-            factor=0.5, 
-            patience=5,
+            factor=0.75, 
+            patience=25,
             min_lr=1e-6
         )
         self.scheduler_D = ReduceLROnPlateau(
             self.optimizer_D, 
             mode='min', 
-            factor=0.5, 
-            patience=5,
+            factor=0.75, 
+            patience=25,
             min_lr=1e-6
         )
 
