@@ -17,10 +17,8 @@
     },
     "dataset": {
         "image_size": 256,
-        "batch_size": 8,
+        "batch_size": 32,
         "load_dataset_to_memory": false,
-        "reduce_dataset_factor": 2,
-        "num_workers": 6,
-        "use_augments": false
+        "use_augments": true
     }
 }

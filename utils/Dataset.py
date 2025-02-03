@@ -152,16 +152,6 @@ reduce_dataset_factor = 4
 if config.get('dataset', 'load_dataset_to_memory'):
     train_dataset = InMemoryDataset(train_dataset)
 
-if config.get('dataset', 'reduce_dataset_factor') != 0:
-    # Уменьшаем размер датасета в 4 раза
-    dataset_size = len(train_dataset)
-    indices = np.arange(dataset_size)  # Создаем массив индексов
-    np.random.shuffle(indices)  # Перемешиваем индексы для случайного выбора
-    reduced_indices = indices[:dataset_size // config.get('dataset', 'reduce_dataset_factor')]  # Берем только 1/reduce_dataset_factor часть индексов
-
-    # Создаем подмножество
-    train_dataset = Subset(train_dataset, reduced_indices)
-
 # DataLoader для батчей
 train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=os.cpu_count()//2, pin_memory=True, persistent_workers=True, prefetch_factor=2)
 test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=os.cpu_count()//2, pin_memory=True, persistent_workers=True, prefetch_factor=2)

@@ -27,4 +27,3 @@ def load_losses(log_path=f'{os.getcwd()}/logs/losses.npz'):
         print(f"Файл с потерями не найден по пути: {log_path}")
         return {}
     return dict(np.load(log_path))
-

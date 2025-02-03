@@ -3,13 +3,115 @@ import torch.nn as nn
 import os
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import datetime
+from torchmetrics.image import PeakSignalNoiseRatio, StructuralSimilarityIndexMeasure
+import math
+import torch.nn.functional as F
+
+import math
+import torch
+from torch.optim.lr_scheduler import _LRScheduler
+
+class WarmupCosineAnnealingWarmRestarts(_LRScheduler):
+    """
+    Расширенный планировщик (scheduler) для оптимизатора PyTorch,
+    сочетающий warm-up и Cosine Annealing Warm Restarts.
+    
+    Аргументы:
+        optimizer (Optimizer): Optimizer, к которому привязан scheduler.
+        warmup_epochs (int): Количество эпох для "прогрева" (warm-up).
+        T_0 (int): Количество эпох в первом цикле косинусного затухания.
+        T_mult (int, float): Во сколько раз увеличивается период T_i после каждого рестарта.
+        eta_min (float): Минимальный learning rate во время косинусного затухания.
+        warmup_start_lr (float): Начальное значение LR на старте (0 по умолчанию).
+        last_epoch (int): Номер последней обученной эпохи (по умолчанию -1).
+    """
+    def __init__(
+        self,
+        optimizer: torch.optim.Optimizer,
+        warmup_epochs: int,
+        T_0: int,
+        T_mult: float = 1,
+        eta_min: float = 0.0,
+        warmup_start_lr: float = 2e-4,
+        last_epoch: int = -1
+    ):
+        # Параметры warm-up
+        self.warmup_epochs = warmup_epochs
+        self.warmup_start_lr = warmup_start_lr
+        
+        # Параметры Cosine Annealing Warm Restarts
+        self.T_0 = T_0       # длина первого цикла
+        self.T_mult = T_mult # во сколько раз увеличиваем T_i после рестартов
+        self.eta_min = eta_min
+        
+        # Текущее значение T_i и счётчик "какой цикл"
+        self.T_i = T_0       # длина текущего цикла
+        self.cycle = 0       # номер цикла
+        self.cycle_epoch = 0 # сколько эпох прошло с начала текущего цикла
+        
+        super().__init__(optimizer, last_epoch)
+    
+    def get_lr(self):
+        """
+        Возвращает список LR для каждой param_group оптимизатора на текущей эпохе (self.last_epoch).
+        """
+        # 1) Фаза warm-up (линейный рост от warmup_start_lr до base_lr)
+        if self.last_epoch < self.warmup_epochs:
+            # Пропорция прогрева от 0 до 1
+            warmup_progress = float(self.last_epoch) / float(self.warmup_epochs)
+            
+            # Линейная интерполяция: LR = warmup_start_lr + (base_lr - warmup_start_lr)*warmup_progress
+            return [
+                self.warmup_start_lr + (base_lr - self.warmup_start_lr) * warmup_progress
+                for base_lr in self.base_lrs
+            ]
+        
+        # 2) Фаза Cosine Annealing с рестартами
+        else:
+            # Сколько эпох прошло с конца warm-up
+            epochs_since_warmup = self.last_epoch - self.warmup_epochs
+            
+            # Определяем, не пора ли рестартнуть новый цикл
+            # (когда epochs_since_warmup >= T_i, значит заканчивается текущий цикл)
+            if epochs_since_warmup // self.T_i > self.cycle:
+                # Заходим в новый цикл
+                self.cycle += 1
+                # Обновляем T_i (умножаем на T_mult)
+                self.T_i = int(self.T_i * self.T_mult)
+            
+            # Теперь выясняем, сколько эпох прошло в рамках "текущего" цикла
+            # Начало цикла = сумма всех предыдущих T_i; проще всего смотреть разницу
+            cycle_start_epoch = sum(self.T_0 * (self.T_mult**i) for i in range(self.cycle))
+            self.cycle_epoch = epochs_since_warmup - (cycle_start_epoch - self.T_0*(self.T_mult**(self.cycle-1)) if self.cycle > 0 else 0)
+            # Вариант попроще: self.cycle_epoch = epochs_since_warmup - (cycle_start_epoch - self.T_i) если аккуратно считать.
+            # Ниже упрощённый расчёт:
+            # self.cycle_epoch = epochs_since_warmup - (cycle_start_epoch - self.T_i)
+            
+            # Нормируем на длину цикла, чтобы получить прогресс от 0 до 1
+            # (self.cycle_epoch / self.T_i) 
+            cosine_progress = float(self.cycle_epoch) / float(self.T_i)
+            
+            # Косинусная формула:
+            # LR = eta_min + (base_lr - eta_min) * (1 + cos(pi * progress)) / 2
+            return [
+                self.eta_min + (base_lr - self.eta_min) * 
+                (1.0 + math.cos(math.pi * cosine_progress)) / 2.0
+                for base_lr in self.base_lrs
+            ]
 
 class CNNBlock(nn.Module):
     def __init__(self, in_channels, out_channels, stride=2):
         super().__init__()
         self.conv = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, 4, stride, 1, bias=False, padding_mode="reflect"),
-            nn.BatchNorm2d(out_channels),
+            nn.utils.spectral_norm(  # Добавляем Spectral Normalization
+                nn.Conv2d(
+                    in_channels, 
+                    out_channels, 
+                    4, stride, 1, 
+                    padding_mode="reflect", 
+                    bias=False
+                )
+            ),
             nn.LeakyReLU(0.2)
         )
 
@@ -34,7 +136,6 @@ class Discriminator(nn.Module):
             CNNBlock(64, 128, stride=1),
             CNNBlock(128, 256),
             CNNBlock(256, 512),
-            # CNNBlock(512, 1024),
             nn.Conv2d(512, 1, 4, 1, 1, padding_mode="reflect")
         )
 
@@ -49,12 +150,12 @@ if __name__ == "__main__":
     y = torch.randn((1, 3, 256, 256))
     model = Discriminator()
     preds = model(x, y)
-    print(f'Discriminator: {x.shape} + {y.shape} ===> {preds.shape}')
+    print(f'Discriminator:\n\t{x.shape} + {y.shape} ===> {preds.shape}')
 
 
 class Block(nn.Module):
     def __init__(self, in_channels, out_channels, down=True, act="relu", use_dropout=False, **kwargs):
-        super().__init__() 
+        super().__init__()
         self.conv = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, 4, 2, 1, bias=False, padding_mode="reflect", **kwargs)
             if down
@@ -66,8 +167,22 @@ class Block(nn.Module):
         self.dropout = nn.Dropout(0.5)
 
     def forward(self, x):
-        return self.conv(x)
-        return self.dropout(self.conv(x)) if self.use_dropout else self.conv(x)
+        x = self.conv(x)
+        return self.dropout(x) if self.use_dropout else x
+
+class ResBlock(nn.Module):
+    def __init__(self, channels):
+        super().__init__()
+        self.conv = nn.Sequential(
+            nn.Conv2d(channels, channels, kernel_size=3, padding=1, bias=False),
+            nn.InstanceNorm2d(channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(channels, channels, kernel_size=3, padding=1, bias=False),
+            nn.InstanceNorm2d(channels)
+        )
+
+    def forward(self, x):
+        return x + self.conv(x)
 
 class Generator(nn.Module):
     def __init__(self, in_channels=1):
@@ -77,7 +192,13 @@ class Generator(nn.Module):
             nn.LeakyReLU(inplace=True)
         )
 
-        self.down1 = Block(64, 128, down=True, act="leaky", use_dropout=False)
+        self.down1 = nn.Sequential(
+            nn.Conv2d(64, 128, 4, 2, 1, bias=False, padding_mode="reflect"),
+            nn.InstanceNorm2d(128),
+            nn.LeakyReLU(inplace=True),
+            ResBlock(128),
+            ResBlock(128)
+        )
         self.down2 = Block(128, 256, down=True, act="leaky", use_dropout=False)
         self.down3 = Block(256, 512, down=True, act="leaky", use_dropout=False)
         self.down4 = Block(512, 512, down=True, act="leaky", use_dropout=False)
@@ -122,7 +243,7 @@ if __name__ == "__main__":
     x = torch.randn((1, 1, 256, 256))
     model = Generator()
     preds = model(x)
-    print(f'Generator: {x.shape} ===> {preds.shape}')
+    print(f'Generator:\n\t{x.shape} ===> {preds.shape}')
 
 
 class Pix2PixGAN(nn.Module):
@@ -131,71 +252,125 @@ class Pix2PixGAN(nn.Module):
         self.device = device
         self.generator = Generator().to(self.device)
         self.discriminator = Discriminator().to(self.device)
+        self.scaler = torch.amp.GradScaler('cuda')
 
-        self.optimizer_G = torch.optim.AdamW(self.generator.parameters(), lr=0.0002, betas=(0.5, 0.999))
-        self.optimizer_D = torch.optim.AdamW(self.discriminator.parameters(), lr=0.0002, betas=(0.5, 0.999))
+        self.optimizer_G = torch.optim.AdamW(self.generator.parameters(), lr=2e-3, betas=(0.5, 0.999))
+        self.optimizer_D = torch.optim.AdamW(self.discriminator.parameters(), lr=2e-3, betas=(0.5, 0.999))
 
         self.criterion_GAN = nn.MSELoss()
         self.criterion_L1 = nn.L1Loss()
 
+        self.psnr = PeakSignalNoiseRatio().to(self.device)
+        self.ssim = StructuralSimilarityIndexMeasure(data_range=2.0).to(self.device)
+
         self.l1_lambda = l1_lambda
 
-        self.scheduler_G = ReduceLROnPlateau(
-            self.optimizer_G, 
-            mode='min', 
-            factor=0.75, 
-            patience=25,
-            min_lr=1e-6
+        # self.scheduler_G = ReduceLROnPlateau(
+        #     self.optimizer_G, 
+        #     mode='min', 
+        #     factor=0.75, 
+        #     patience=100,
+        #     min_lr=1e-6
+        # )
+        # self.scheduler_D = ReduceLROnPlateau(
+        #     self.optimizer_D, 
+        #     mode='min', 
+        #     factor=0.75, 
+        #     patience=100,
+        #     min_lr=1e-6
+        # )
+
+        self.scheduler_G = WarmupCosineAnnealingWarmRestarts(
+            self.optimizer_G,
+            warmup_epochs=5,
+            T_0=10,        # первый Cosine-цикл = 10 эпох
+            T_mult=2,      # каждый следующий цикл в 2 раза длиннее предыдущего
+            eta_min=1e-5,
+            warmup_start_lr=1e-4
         )
-        self.scheduler_D = ReduceLROnPlateau(
-            self.optimizer_D, 
-            mode='min', 
-            factor=0.75, 
-            patience=25,
-            min_lr=1e-6
+
+        self.scheduler_D = WarmupCosineAnnealingWarmRestarts(
+            self.optimizer_D,
+            warmup_epochs=5,
+            T_0=10,        # первый Cosine-цикл = 10 эпох
+            T_mult=2,      # каждый следующий цикл в 2 раза длиннее предыдущего
+            eta_min=1e-5,
+            warmup_start_lr=1e-4
         )
 
     def train_step(self, real_A, real_B):
         real_A, real_B = real_A.to(self.device), real_B.to(self.device)
-
-        # Train Discriminator
         self.optimizer_D.zero_grad()
+        with torch.amp.autocast('cuda'):
+            # Обучение дискриминатора
+            fake_B = self.generator(real_A)
 
+            # Получаем выходные данные дискриминатора
+            output_real = self.discriminator(real_A, real_B)
+            output_fake = self.discriminator(real_A, fake_B.detach())
+
+            # Создаем целевые метки
+            target_real = torch.ones_like(output_real)
+            target_fake = torch.zeros_like(output_fake)
+
+            # Вычисляем потери
+            loss_D_real = self.criterion_GAN(output_real, target_real)
+            loss_D_fake = self.criterion_GAN(output_fake, target_fake)
+            loss_D = (loss_D_real + loss_D_fake) * 0.5
+            
+        self.scaler.scale(loss_D).backward() # Масштабируем градиенты
+        self.scaler.step(self.optimizer_D)
+
+        # Обучение генератора
+        self.optimizer_G.zero_grad()
+
+        with torch.amp.autocast('cuda'):
+            output_fake_for_G = self.discriminator(real_A, fake_B)
+            loss_G_GAN = self.criterion_GAN(output_fake_for_G, torch.ones_like(output_fake_for_G))
+            loss_G_L1 = self.criterion_L1(fake_B, real_B) * self.l1_lambda
+            loss_G = loss_G_GAN + loss_G_L1
+
+            # Вычисляем PSNR и SSIM
+            psnr_value = self.psnr(fake_B, real_B)  # Оцениваем на первом изображении в батче
+            ssim_value = self.ssim(fake_B, real_B)
+        
+        self.scaler.scale(loss_G).backward()
+        self.scaler.step(self.optimizer_G)
+        self.scaler.update()  # Обновляем масштаб
+
+        return loss_G.item(), loss_D.item(), ssim_value.item(), psnr_value.item()
+
+    def val_step(self, real_A, real_B):
+        real_A, real_B = real_A.to(self.device), real_B.to(self.device)
         fake_B = self.generator(real_A)
 
-        # Получаем выходные данные дискриминатора
-        output_real = self.discriminator(real_A, real_B)
-        output_fake = self.discriminator(real_A, fake_B.detach())
+        # Потери для генератора
+        loss_G_L1 = self.criterion_L1(fake_B, real_B)
 
-        # Создаем целевые метки
+        # Потери для дискриминатора
+        output_real = self.discriminator(real_A, real_B)
+        output_fake = self.discriminator(real_A, fake_B)
+        
         target_real = torch.ones_like(output_real)
         target_fake = torch.zeros_like(output_fake)
 
-        # Вычисляем потери
         loss_D_real = self.criterion_GAN(output_real, target_real)
         loss_D_fake = self.criterion_GAN(output_fake, target_fake)
         loss_D = (loss_D_real + loss_D_fake) * 0.5
-        loss_D.backward()
-        self.optimizer_D.step()
 
-        # Train Generator
-        self.optimizer_G.zero_grad()
+        # Вычисляем PSNR и SSIM
+        psnr_value = self.psnr(fake_B, real_B)  # Оцениваем на первом изображении в батче
+        ssim_value = self.ssim(fake_B, real_B)
 
-        output_fake_for_G = self.discriminator(real_A, fake_B)
-        loss_G_GAN = self.criterion_GAN(output_fake_for_G, torch.ones_like(output_fake_for_G))
-        loss_G_L1 = self.criterion_L1(fake_B, real_B) * self.l1_lambda
-        loss_G = loss_G_GAN + loss_G_L1
-        loss_G.backward()
-        self.optimizer_G.step()
+        return loss_G_L1.item(), loss_D.item(), ssim_value.item(), psnr_value.item()
 
-        return loss_D.item(), loss_G.item()
 
     def step_schedulers(self, loss_D, loss_G):
         """
         Шаг для ReduceLROnPlateau. Передаем потери дискриминатора и генератора.
         """
-        self.scheduler_D.step(loss_D)
-        self.scheduler_G.step(loss_G)
+        self.scheduler_D.step()
+        self.scheduler_G.step()
 
     # Метод для сохранения состояния модели
     def save_state(self, epoch, save_dir=os.path.join(os.getcwd(), 'checkpoints')):
@@ -266,7 +441,11 @@ class Pix2PixGAN(nn.Module):
 if __name__ == "__main__":
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     gan = Pix2PixGAN(device)
-    x = torch.randn((1, 1, 256, 256))
-    y = torch.randn((1, 3, 256, 256))
-    loss_D, loss_G = gan.train_step(x, y)
-    print(f'Pix2PixGAN: {x.shape} + {y.shape} ===> Loss_D={loss_D}, Loss_G={loss_G}')
+    x = torch.randn((4, 1, 256, 256))
+    y = torch.randn((4, 3, 256, 256))
+
+    train_loss_D, train_loss_G, train_ssim, train_psnr = gan.train_step(x, y)
+    val_loss_D, val_loss_G, val_ssim, val_psnr = gan.val_step(x, y)
+    print('Pix2PixGAN:' +
+        f'\n\ttrain_loss_D = {train_loss_D:.2f}, train_loss_G = {train_loss_G:.2f}, train_ssim = {train_ssim:.2f}, train_psnr = {train_psnr:.2f}' +
+        f'\n\tval_loss_D = {val_loss_D:.2f}, val_loss_G = {val_loss_G:.2f}, val_ssim = {val_ssim:.2f}, val_psnr = {val_psnr:.2f}')
