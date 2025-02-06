@@ -2,3 +2,4 @@
 /saved_models
 /checkpoints
 /*/__pycache__
+/runs
