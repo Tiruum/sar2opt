@@ -229,8 +229,8 @@ class Pix2PixGAN(nn.Module):
             fake_B_for_D = self.generator(real_A).detach()
             output_real = self.discriminator(real_A, real_B)
             output_fake = self.discriminator(real_A, fake_B_for_D)
-            target_real = torch.ones_like(output_real)
-            target_fake = torch.zeros_like(output_fake)
+            target_real = torch.ones_like(output_real) * 0.9
+            target_fake = torch.ones_like(output_fake) * 0.1
 
             loss_D_real = self.criterion_GAN(output_real, target_real)
             loss_D_fake = self.criterion_GAN(output_fake, target_fake)

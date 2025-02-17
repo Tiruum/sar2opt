@@ -1,7 +1,7 @@
 {
   "model": {
     "device": "cuda",
-    "end_epoch": 800,
+    "end_epoch": 400,
     "load_model": false
   },
   "paths": {
