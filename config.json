@@ -10,7 +10,7 @@
   },
   "dataset": {
     "image_size": 256,
-    "batch_size": 32,
+    "batch_size": 8,
     "use_augments": true
   }
 }

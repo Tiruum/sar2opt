@@ -1,63 +1,10 @@
 import torch
 import torch.nn as nn
 import os
-from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 import datetime
 from torchmetrics.image import PeakSignalNoiseRatio, StructuralSimilarityIndexMeasure
-import math
-import torch.nn.functional as F
-
-import math
-import torch
-from torch.optim.lr_scheduler import _LRScheduler
-
-class Discriminator(nn.Module):
-    def __init__(self, in_channels=4):
-        super().__init__()
-        self.conv1 = nn.Sequential(
-            nn.utils.spectral_norm(nn.Conv2d(in_channels, 64, 4, 2, 1, padding_mode="reflect")),
-            nn.LeakyReLU(0.2)
-        )
-        self.conv2 = nn.Sequential(
-            nn.utils.spectral_norm(nn.Conv2d(64, 128, 4, 2, 1)),
-            nn.InstanceNorm2d(128),
-            nn.LeakyReLU(0.2)
-        )
-        self.conv3 = nn.Sequential(
-            nn.utils.spectral_norm(nn.Conv2d(128, 256, 4, 2, 1)),
-            nn.InstanceNorm2d(256),
-            nn.LeakyReLU(0.2)
-        )
-        self.conv4 = nn.Sequential(
-            nn.utils.spectral_norm(nn.Conv2d(256, 512, 4, 1, 1)),
-            nn.InstanceNorm2d(512),
-            nn.LeakyReLU(0.2)
-        )
-        self.final = nn.Conv2d(512, 1, 4, 1, 1)
-
-    def forward(self, x, y, return_features=False):
-        x = torch.cat([x, y], dim=1)
-
-        # Возвращаем признаки из всех слоев
-        f1 = self.conv1(x)
-        f2 = self.conv2(f1)
-        f3 = self.conv3(f2)
-        f4 = self.conv4(f3)
-        out = self.final(f4)
-        if not return_features:
-            return out
-        else:
-            return out, [f1, f2, f3, f4]  # Возвращаем выход и признаки
-
-if __name__ == "__main__":
-    x = torch.randn((1, 1, 256, 256))
-    y = torch.randn((1, 3, 256, 256))
-    model = Discriminator()
-    preds = model(x, y)
-    print(f'Discriminator:\n\t{x.shape} + {y.shape} ===> {preds.shape}')
-
-
+from lpips import LPIPS
 
 class SelfAttention(nn.Module):
     def __init__(self, in_dim):
@@ -78,71 +25,87 @@ class SelfAttention(nn.Module):
         out = torch.bmm(proj_value, attention.permute(0, 2, 1)).view(batch, C, width, height)
         out = self.gamma * out + x
         return out
-
-class Generator(nn.Module):
-    def __init__(self, in_channels=1):
-        super().__init__()
-        # Encoder (downsampling)
-        self.down1 = self._block(in_channels, 64, norm=False)       # Выход: 64 каналов, размер: 128x128
-        self.down2 = self._block(64, 128)                             # Выход: 128 каналов, размер: 64x64
-        self.down3 = self._block(128, 256)                            # Выход: 256 каналов, размер: 32x32
-        # Добавляем self attention для слоя с 256 каналами
-        self.sa = SelfAttention(256)
-        self.down4 = self._block(256, 512, dropout=0.5)               # Выход: 512 каналов, размер: 16x16
-        self.down5 = self._block(512, 512, dropout=0.5)               # Выход: 512 каналов, размер: 8x8
-
-        # Дополнительный слой для апсемплинга d5 до разрешения d4 (16x16)
-        self.upsample = nn.Upsample(scale_factor=2, mode='nearest')
-        
-        # Decoder (upsampling) с учетом skip connections:
-        # up1 принимает конкатенацию: d5 (после апсемплинга, 512 каналов) + d4 (512 каналов) = 1024 каналов
-        self.up1 = self._block(1024, 512, dropout=0.5, up=True)
-        # up2: объединение u1 (512) и d3 (256) → 768 каналов
-        self.up2 = self._block(768, 256, dropout=0.5, up=True)
-        # up3: объединение u2 (256) и d2 (128) → 384 каналов
-        self.up3 = self._block(384, 128, up=True)
-        # up4: объединение u3 (128) и d1 (64) → 192 канала
-        self.up4 = self._block(192, 64, up=True)
-        
-        self.final = nn.Sequential(
-            nn.Conv2d(64, 3, kernel_size=3, stride=1, padding=1),
-            nn.Tanh()
-        )
-
     
-    def _block(self, in_ch, out_ch, norm=True, dropout=0.0, up=False):
-        layers = []
-        if up:
-            layers.append(nn.ConvTranspose2d(in_ch, out_ch, 4, 2, 1, bias=False))
-        else:
-            layers.append(nn.Conv2d(in_ch, out_ch, 4, 2, 1, bias=False, padding_mode="reflect"))
-        if norm:
-            layers.append(nn.InstanceNorm2d(out_ch))
-        if dropout:
-            layers.append(nn.Dropout(dropout))
-        layers.append(nn.ReLU(inplace=True))
-        return nn.Sequential(*layers)
+class ResidualBlock(nn.Module):
+    def __init__(self, in_channels):
+        super(ResidualBlock, self).__init__()
+        self.block = nn.Sequential(
+            nn.Conv2d(in_channels, in_channels, kernel_size=3, stride=1, padding=1),
+            nn.InstanceNorm2d(in_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels, in_channels, kernel_size=3, stride=1, padding=1),
+            nn.InstanceNorm2d(in_channels),
+        )
     
     def forward(self, x):
-        # Encoder
-        d1 = self.down1(x)    # (B, 64, 128, 128)
-        d2 = self.down2(d1)   # (B, 128, 64, 64)
-        d3 = self.down3(d2)   # (B, 256, 32, 32)
-        # Применяем self attention к d3
-        d3 = self.sa(d3)
-        d4 = self.down4(d3)   # (B, 512, 16, 16)
-        d5 = self.down5(d4)   # (B, 512, 8, 8)
+        return x + self.block(x)
+    
+def compute_gradient_penalty(discriminator, real_A, real_B, fake_B, device):
+    alpha = torch.rand(real_B.size(0), 1, 1, 1, device=device)
+    interpolates = (alpha * real_B + (1 - alpha) * fake_B).requires_grad_(True)
+    d_interpolates = discriminator(real_A, interpolates)
+    gradients = torch.autograd.grad(
+        outputs=d_interpolates,
+        inputs=interpolates,
+        grad_outputs=torch.ones_like(d_interpolates),
+        create_graph=True,
+        retain_graph=True
+    )[0]
+    gradients = gradients.view(gradients.size(0), -1)
+    gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
+    return gradient_penalty
+
+class Discriminator(nn.Module):
+    def __init__(self, in_channels=4):
+        super().__init__()
+        self.conv1 = nn.Sequential(
+            nn.utils.spectral_norm(nn.Conv2d(in_channels, 64, 4, 2, 1, padding_mode="reflect")),
+            nn.LeakyReLU(0.2, inplace=True)
+        )
+        self.conv2 = nn.Sequential(
+            nn.utils.spectral_norm(nn.Conv2d(64, 128, 4, 2, 1)),
+            nn.InstanceNorm2d(128),
+            nn.LeakyReLU(0.2, inplace=True)
+        )
+        self.attn = SelfAttention(128)
+        self.final = nn.Conv2d(128, 1, kernel_size=4, stride=1, padding=1)
+
+    def forward(self, x, y, return_features=False):
+        x = torch.cat([x, y], dim=1)
+        f1 = self.conv1(x)
+        f2 = self.conv2(f1)
+        f3 = self.attn(f2)
+        out = self.final(f3)
+        if not return_features:
+            return out
+        return out, [f1, f2, f3]
+
+if __name__ == "__main__":
+    x = torch.randn((1, 1, 256, 256))
+    y = torch.randn((1, 3, 256, 256))
+    model = Discriminator()
+    preds = model(x, y)
+    print(f'Discriminator:\n\t{x.shape} + {y.shape} ===> {preds.shape}')
+
+class Generator(nn.Module):
+    def __init__(self, in_channels=1, num_residuals=6):
+        super(Generator, self).__init__()
+        self.initial = nn.Sequential(
+            nn.utils.spectral_norm(nn.Conv2d(in_channels, 64, kernel_size=7, stride=1, padding=3)),
+            nn.InstanceNorm2d(64),
+            nn.ReLU(inplace=True)
+        )
         
-        # Апсемплинг d5 до разрешения 16x16 для корректного объединения с d4
-        d5_up = self.upsample(d5)  # (B, 512, 16, 16)
-        
-        # Decoder с использованием skip connections
-        u1 = self.up1(torch.cat([d5_up, d4], dim=1))     # Вход: 1024 каналов → (B, 512, 32, 32)
-        u2 = self.up2(torch.cat([u1, d3], dim=1))        # Вход: 512+256 = 768 каналов → (B, 256, 64, 64)
-        u3 = self.up3(torch.cat([u2, d2], dim=1))        # Вход: 256+128 = 384 каналов → (B, 128, 128, 128)
-        u4 = self.up4(torch.cat([u3, d1], dim=1))        # Вход: 128+64 = 192 каналов → (B, 64, 256, 256)
-        
-        return self.final(u4)  # (B, 3, 256, 256)
+        self.res_blocks = nn.Sequential(*[ResidualBlock(64) for _ in range(num_residuals)])
+        self.final = nn.Sequential(
+            nn.Conv2d(64, 3, kernel_size=7, stride=1, padding=3),
+            nn.Tanh()
+        )
+    
+    def forward(self, x):
+        x = self.initial(x)
+        x = self.res_blocks(x)
+        return self.final(x)
 
 if __name__ == "__main__":
     x = torch.randn((1, 1, 256, 256))
@@ -157,29 +120,27 @@ class Pix2PixGAN(nn.Module):
         self.device = device
         self.generator = Generator().to(self.device)
         self.discriminator = Discriminator().to(self.device)
-        self.scaler = torch.amp.GradScaler(enabled=(device.type=='cuda'))
-
-        self.optimizer_G = torch.optim.AdamW(
-            self.generator.parameters(),
-            lr=2e-4,
-            betas=(0.5, 0.999),
-            eps=1e-6
-        )
-        self.optimizer_D = torch.optim.AdamW(
-            self.discriminator.parameters(),
-            lr=2e-4,
-            betas=(0.5, 0.999),
-            eps=1e-6
-        )
 
         self.criterion_GAN = nn.MSELoss()
         self.criterion_L1 = nn.L1Loss()
+        self.criterion_perceptual = LPIPS().to(self.device)
+
+        self.optimizer_G = torch.optim.AdamW(
+            self.generator.parameters(),
+            lr=1e-4,
+            betas=(0.5, 0.999)
+        )
+        self.optimizer_D = torch.optim.AdamW(
+            self.discriminator.parameters(),
+            lr=4e-4,
+            betas=(0.5, 0.999)
+        )
 
         self.psnr = PeakSignalNoiseRatio().to(self.device)
         self.ssim = StructuralSimilarityIndexMeasure(data_range=2.0).to(self.device)
 
         self.l1_lambda = 100    # Коэффициент для L1 loss
-        self.lambda_gp = 0.1     # Коэффициент для gradient penalty
+        self.lambda_gp = 10     # Коэффициент для gradient penalty
         self.lambda_fm = 1     # Коэффициент для feature matching
 
         self.scheduler_G = CosineAnnealingWarmRestarts(
@@ -196,28 +157,6 @@ class Pix2PixGAN(nn.Module):
             eta_min=1e-6
         )
 
-    def _initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='leaky_relu')
-
-    def compute_gradient_penalty(self, real_A, real_B, fake_B):
-        alpha = torch.rand(real_B.size(0), 1, 1, 1, device=self.device)
-        interpolates = (alpha * real_B + (1 - alpha) * fake_B).requires_grad_(True)
-        
-        d_interpolates = self.discriminator(real_A, interpolates)
-        gradients = torch.autograd.grad(
-            outputs=d_interpolates,
-            inputs=interpolates,
-            grad_outputs=torch.ones_like(d_interpolates),
-            create_graph=True,
-            retain_graph=True
-        )[0]
-        
-        gradients = gradients.view(gradients.size(0), -1)
-        gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
-        return gradient_penalty
-
     def train_step(self, real_A, real_B):
         real_A, real_B = real_A.to(self.device), real_B.to(self.device)
 
@@ -225,18 +164,17 @@ class Pix2PixGAN(nn.Module):
         # Обучение дискриминатора
         # ---------------------------
         self.optimizer_D.zero_grad()
-        with torch.set_grad_enabled(True):
-            fake_B_for_D = self.generator(real_A).detach()
-            output_real = self.discriminator(real_A, real_B)
-            output_fake = self.discriminator(real_A, fake_B_for_D)
-            target_real = torch.ones_like(output_real) * 0.9
-            target_fake = torch.ones_like(output_fake) * 0.1
+        fake_B_for_D = self.generator(real_A).detach()
+        output_real = self.discriminator(real_A, real_B)
+        output_fake = self.discriminator(real_A, fake_B_for_D)
+        target_real = torch.ones_like(output_real) * 0.9
+        target_fake = torch.ones_like(output_fake) * 0.1
 
-            loss_D_real = self.criterion_GAN(output_real, target_real)
-            loss_D_fake = self.criterion_GAN(output_fake, target_fake)
-            loss_D_gp = self.compute_gradient_penalty(real_A, real_B, fake_B_for_D)
-            loss_D = (loss_D_real + loss_D_fake) * 0.5 + self.lambda_gp * loss_D_gp
-            
+        loss_D_real = self.criterion_GAN(output_real, target_real)
+        loss_D_fake = self.criterion_GAN(output_fake, target_fake)
+        loss_D_gp = compute_gradient_penalty(self.discriminator, real_A, real_B, fake_B_for_D, self.device)
+        loss_D = (loss_D_real + loss_D_fake) * 0.5 + self.lambda_gp * loss_D_gp
+
         loss_D.backward()
         self.optimizer_D.step()
 
@@ -244,25 +182,25 @@ class Pix2PixGAN(nn.Module):
         # Обучение генератора
         # ---------------------------
         self.optimizer_G.zero_grad()
-        with torch.set_grad_enabled(True):
-            fake_B_for_G = self.generator(real_A)
-            pred_fake, fake_features = self.discriminator(real_A, fake_B_for_G, return_features=True)
-            _, real_features = self.discriminator(real_A, real_B, return_features=True)
+        fake_B_for_G = self.generator(real_A)
+        pred_fake, fake_features = self.discriminator(real_A, fake_B_for_G, return_features=True)
+        _, real_features = self.discriminator(real_A, real_B, return_features=True)
 
-            loss_G_GAN = self.criterion_GAN(pred_fake, torch.ones_like(pred_fake))
-            loss_G_L1 = self.criterion_L1(fake_B_for_G, real_B) * self.l1_lambda
-            loss_fm = 0
-            for real_feat, fake_feat in zip(real_features[:-1], fake_features[:-1]):
-                loss_fm += self.criterion_L1(fake_feat, real_feat.detach())
-            loss_G_FM = loss_fm * self.lambda_fm
-            loss_G = loss_G_GAN + loss_G_L1 + loss_G_FM
+        loss_G_GAN = self.criterion_GAN(pred_fake, torch.ones_like(pred_fake))
+        loss_G_L1 = self.criterion_L1(fake_B_for_G, real_B) * self.l1_lambda
+        loss_fm = 0
+        for real_feat, fake_feat in zip(real_features[:-1], fake_features[:-1]):
+            loss_fm += self.criterion_L1(fake_feat, real_feat.detach())
+        loss_G_FM = loss_fm * self.lambda_fm
+        loss_G_perceptual = self.criterion_perceptual(fake_B_for_G, real_B).mean()
+        loss_G = loss_G_GAN + loss_G_L1 + loss_G_FM + loss_G_perceptual
 
-            # Вычисляем PSNR и SSIM
-            psnr_value = self.psnr(fake_B_for_G, real_B)
-            ssim_value = self.ssim(fake_B_for_G, real_B)
-        
-            loss_G.backward()
-            self.optimizer_G.step()
+        # Вычисляем PSNR и SSIM
+        psnr_value = self.psnr(fake_B_for_G, real_B)
+        ssim_value = self.ssim(fake_B_for_G, real_B)
+    
+        loss_G.backward()
+        self.optimizer_G.step()
 
         return loss_G.item(), loss_D.item(), ssim_value.item(), psnr_value.item()
 

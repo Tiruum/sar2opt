@@ -131,9 +131,9 @@ train_dataset = SARToOpticalDataset(
 test_dataset = SARToOpticalDataset(
     sar_dir=os.path.join(DATA_DIR, "testA"),
     optical_dir=os.path.join(DATA_DIR, "testB"),
-    common_transform=common_transform,  # или можно оставить None для тестовых данных
-    sar_specific=sar_specific,
-    optical_specific=optical_specific,
+    common_transform=None,  # или можно оставить None для тестовых данных
+    sar_specific=None,
+    optical_specific=None,
     resize_transform=resize_transform
 )
 
