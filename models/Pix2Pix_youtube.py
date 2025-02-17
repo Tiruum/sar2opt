@@ -123,7 +123,7 @@ class Pix2PixGAN(nn.Module):
 
         self.criterion_GAN = nn.MSELoss()
         self.criterion_L1 = nn.L1Loss()
-        self.criterion_perceptual = LPIPS().to(self.device)
+        self.criterion_perceptual = LPIPS(pretrained=True).to(self.device)
 
         self.optimizer_G = torch.optim.AdamW(
             self.generator.parameters(),
