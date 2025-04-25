@@ -6,13 +6,7 @@ import cv2
 import numpy as np
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
-from utils.ConfigLoader import ConfigLoader
-config = ConfigLoader()
-
-# Настройки
-IMAGE_SIZE = config.get('dataset', 'image_size')  # Размер для ресайза изображений
-DATA_DIR = "./dataset"  # Путь к папке с данными
-BATCH_SIZE = config.get('dataset', 'batch_size') # Размер батча
+from .Config import Config
 
 # Трансформации
 common_transform = A.Compose([
@@ -40,7 +34,7 @@ optical_specific = A.Compose([
     ToTensorV2()
 ])
 
-resize_transform = A.Resize(IMAGE_SIZE, IMAGE_SIZE)
+resize_transform = A.Resize(Config.IMAGE_SIZE, Config.IMAGE_SIZE)
 
 # Датасет
 class SARToOpticalDataset(Dataset):
@@ -120,8 +114,8 @@ class SARToOpticalDataset(Dataset):
         return sar_final, optical_final
 
 train_dataset = SARToOpticalDataset(
-    sar_dir=os.path.join(DATA_DIR, "trainA"),
-    optical_dir=os.path.join(DATA_DIR, "trainB"),
+    sar_dir=os.path.join(Config.DATA_DIR, "trainA"),
+    optical_dir=os.path.join(Config.DATA_DIR, "trainB"),
     common_transform=common_transform,
     sar_specific=sar_specific,
     optical_specific=optical_specific,
@@ -129,8 +123,8 @@ train_dataset = SARToOpticalDataset(
 )
 
 test_dataset = SARToOpticalDataset(
-    sar_dir=os.path.join(DATA_DIR, "testA"),
-    optical_dir=os.path.join(DATA_DIR, "testB"),
+    sar_dir=os.path.join(Config.DATA_DIR, "testA"),
+    optical_dir=os.path.join(Config.DATA_DIR, "testB"),
     common_transform=None,  # или можно оставить None для тестовых данных
     sar_specific=sar_specific,
     optical_specific=optical_specific,
@@ -140,22 +134,22 @@ test_dataset = SARToOpticalDataset(
 # DataLoader для батчей
 train_loader = DataLoader(
     train_dataset,
-    batch_size=BATCH_SIZE,
+    batch_size=Config.BATCH_SIZE,
     shuffle=True,
-    num_workers=os.cpu_count() // 2,
+    num_workers=Config.NUM_WORKERS,
     pin_memory=True,
-    persistent_workers=True,
-    prefetch_factor=2
+    persistent_workers=Config.PERSISTENT_WORKERS,
+    prefetch_factor=Config.PREFETCH_FACTOR
 )
 
 test_loader = DataLoader(
     test_dataset,
-    batch_size=BATCH_SIZE,
+    batch_size=Config.BATCH_SIZE,
     shuffle=False,
-    num_workers=os.cpu_count() // 2,
+    num_workers=Config.NUM_WORKERS,
     pin_memory=True,
-    persistent_workers=True,
-    prefetch_factor=2
+    persistent_workers=Config.PERSISTENT_WORKERS,
+    prefetch_factor=Config.PREFETCH_FACTOR
 )
 
 # Проверка работы
