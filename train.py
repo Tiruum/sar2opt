@@ -8,7 +8,7 @@ from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.utils import save_image
 
-from models.generator import GlobalGenerator
+from models.generator import UNetGenerator
 from models.multiscale_discriminator import MultiscaleDiscriminator
 from models.losses import GANLoss, L1Loss, FeatureMatchingLoss, PerceptualLoss
 
@@ -22,12 +22,17 @@ def save_checkpoint(model, optimizer, epoch, path):
         'optimizer_state_dict': optimizer.state_dict(),
     }, path)
 
+def total_variation_loss(img):
+    tv_h = torch.mean(torch.abs(img[:, :, :-1, :] - img[:, :, 1:, :]))
+    tv_w = torch.mean(torch.abs(img[:, :, :, :-1] - img[:, :, :, 1:]))
+    return tv_h + tv_w
+
 def train():
     writer = SummaryWriter(log_dir=os.path.join(Config.RESULTS_DIR, 'logs'))
     device = torch.device(Config.DEVICE)
 
     # Инициализация моделей
-    netG = GlobalGenerator(
+    netG = UNetGenerator(
         input_nc=Config.INPUT_NC,
         output_nc=Config.OUTPUT_NC,
         ngf=Config.NGF,
@@ -46,7 +51,7 @@ def train():
     criterionL1 = L1Loss().to(device)
     criterionFM = FeatureMatchingLoss().to(device)
     criterionPerceptual = PerceptualLoss().to(device)
-
+    criterionTV = total_variation_loss().to(device)
     # Оптимизаторы
     optimizer_G = optim.Adam(netG.parameters(), lr=Config.LEARNING_RATE, betas=(Config.BETA1, Config.BETA2))
     optimizer_D = optim.Adam(netD.parameters(), lr=Config.LEARNING_RATE, betas=(Config.BETA1, Config.BETA2))
@@ -113,8 +118,11 @@ def train():
             # Perceptual Loss
             perceptual_loss = criterionPerceptual(fake_optical, real_optical.detach())
 
+            # Total Variation Loss
+            tv_loss = criterionTV(fake_optical)
+
             # Общий Loss генератора
-            g_loss = g_gan_loss + l1_loss * 10.0 + fm_loss * 15.0 + perceptual_loss * 1.0
+            g_loss = g_gan_loss * Config.GAN_LOSS_WEIGHT + l1_loss * Config.L1_LOSS_WEIGHT + fm_loss * Config.FM_LOSS_WEIGHT + perceptual_loss * Config.PERCEPTUAL_LOSS_WEIGHT + tv_loss * Config.TV_LOSS_WEIGHT
 
             g_loss.backward()
             optimizer_G.step()

@@ -26,6 +26,13 @@ class Config:
     PERSISTENT_WORKERS = True,
     PREFETCH_FACTOR = 2 # 2
 
+    # Losses weights
+    GAN_LOSS_WEIGHT = 1.0
+    L1_LOSS_WEIGHT = 10.0
+    FM_LOSS_WEIGHT = 10.0
+    PERCEPTUAL_LOSS_WEIGHT = 1.0
+    TV_LOSS_WEIGHT = 0.1
+
     # Прочее
     DEVICE = 'cuda'  # 'cuda' или 'cpu'
 
