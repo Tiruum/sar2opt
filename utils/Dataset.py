@@ -23,8 +23,8 @@ common_transform = A.Compose([
 
 # Отдельные пайплайны для специфичных аугментаций
 sar_specific = A.Compose([
-    A.GaussianBlur(blur_limit=3, p=0.3),
-    A.GaussNoise(std_range=(0.01, 0.05), p=0.7),
+    # A.GaussianBlur(blur_limit=3, p=0.3),
+    # A.GaussNoise(std_range=(0.01, 0.05), p=0.7),
     A.Normalize(mean=(0.5,), std=(0.5,)),
     ToTensorV2()
 ])

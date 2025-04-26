@@ -22,7 +22,7 @@ def test():
         input_nc=Config.INPUT_NC,
         output_nc=Config.OUTPUT_NC,
         ngf=Config.NGF,
-        n_blocks=6
+        n_blocks=9
     ).to(device)
 
     # Путь к чекпоинту генератора
@@ -31,12 +31,14 @@ def test():
     netG.eval()
 
     # Создаем директории для сохранения результатов
-    save_dir_fake = os.path.join(Config.RESULTS_DIR, "test", "fake")
-    save_dir_real = os.path.join(Config.RESULTS_DIR, "test", "real")
-    save_dir_sar = os.path.join(Config.RESULTS_DIR, "test", "sar")
-    os.makedirs(save_dir_fake, exist_ok=True)
-    os.makedirs(save_dir_real, exist_ok=True)
-    os.makedirs(save_dir_sar, exist_ok=True)
+    # save_dir_fake = os.path.join(Config.RESULTS_DIR, "test", "fake")
+    # save_dir_real = os.path.join(Config.RESULTS_DIR, "test", "real")
+    # save_dir_sar = os.path.join(Config.RESULTS_DIR, "test", "sar")
+    save_dir_concatenated = os.path.join(Config.RESULTS_DIR, "test", "concatenated")
+    # os.makedirs(save_dir_fake, exist_ok=True)
+    # os.makedirs(save_dir_real, exist_ok=True)
+    # os.makedirs(save_dir_sar, exist_ok=True)
+    os.makedirs(save_dir_concatenated, exist_ok=True)
 
     # Прогоняем тест
     with torch.no_grad():
@@ -50,10 +52,15 @@ def test():
             fake_optical_vis = (fake_optical + 1) / 2.0
             real_optical_vis = (real_optical + 1) / 2.0
             sar_vis = (sar + 1) / 2.0
+            sar_vis = sar_vis.repeat(1, 3, 1, 1)
 
-            save_image(fake_optical_vis, os.path.join(save_dir_fake, f"{idx:04d}_fake.png"))
-            save_image(real_optical_vis, os.path.join(save_dir_real, f"{idx:04d}_real.png"))
-            save_image(sar_vis, os.path.join(save_dir_sar, f"{idx:04d}_sar.png"))
+            # Склеиваем изображения по вертикали
+            concatenated_output = torch.cat((fake_optical_vis, real_optical_vis, sar_vis), dim=2)
+
+            # save_image(fake_optical_vis, os.path.join(save_dir_fake, f"{idx:04d}_fake.png"))
+            # save_image(real_optical_vis, os.path.join(save_dir_real, f"{idx:04d}_real.png"))
+            # save_image(sar_vis, os.path.join(save_dir_sar, f"{idx:04d}_sar.png"))
+            save_image(concatenated_output, os.path.join(save_dir_concatenated, f"{idx:04d}_concatenated.png"))
 
 if __name__ == "__main__":
     test()

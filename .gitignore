@@ -1,6 +1,5 @@
 /dataset
-/saved_models
 /checkpoints
 /*/__pycache__
-/runs
+/results
 /saved_images

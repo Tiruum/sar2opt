@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.optim as optim
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
+from torchvision.utils import save_image
 
 from models.generator import GlobalGenerator
 from models.multiscale_discriminator import MultiscaleDiscriminator
@@ -69,10 +70,12 @@ def train():
             real_optical = real_optical.to(device)
 
             # --------- Обновление дискриминатора ---------
+            netD.requires_grad_(True)
             optimizer_D.zero_grad()
 
             # Генерируем фейковое изображение
-            fake_optical = netG(real_sar)
+            with torch.no_grad():
+                fake_optical = netG(real_sar)
 
             # Конкатенируем SAR + Optical
             fake_pair = torch.cat((real_sar, fake_optical), dim=1)
@@ -82,18 +85,15 @@ def train():
             pred_real = netD(real_pair)
 
             # Считаем Loss дискриминатора
-            d_loss_fake = 0
-            d_loss_real = 0
-
-            for fake_out, real_out in zip(pred_fake, pred_real):
-                d_loss_fake += criterionGAN(fake_out, target_is_real=False)
-                d_loss_real += criterionGAN(real_out, target_is_real=True)
+            d_loss_fake = sum(criterionGAN(fake, False) for fake in pred_fake)
+            d_loss_real = sum(criterionGAN(real, True) for real in pred_real)
 
             d_loss = (d_loss_fake + d_loss_real) * 0.5
             d_loss.backward()
             optimizer_D.step()
 
             # --------- Обновление генератора ---------
+            netD.requires_grad_(False)
             optimizer_G.zero_grad()
 
             # Снова прогоняем (чтобы получить свежие данные после обновления дискриминатора)
@@ -102,23 +102,19 @@ def train():
             pred_fake = netD(fake_pair)
 
             # GAN Loss генератора
-            g_gan_loss = 0
-            for fake_out in pred_fake:
-                g_gan_loss += criterionGAN(fake_out, target_is_real=True)
+            g_gan_loss = sum(criterionGAN(fake, True) for fake in pred_fake)
 
             # L1 Loss
             l1_loss = criterionL1(fake_optical, real_optical)
 
             # Feature Matching Loss
-            fm_loss = 0
-            for fake_out, real_out in zip(pred_fake, pred_real):
-                fm_loss += criterionFM([fake_out], [real_out])
+            fm_loss = sum(criterionFM([fake], [real.detach()]) for fake, real in zip(pred_fake, pred_real))
 
             # Perceptual Loss
-            perceptual_loss = criterionPerceptual(fake_optical, real_optical)
+            perceptual_loss = criterionPerceptual(fake_optical, real_optical.detach())
 
             # Общий Loss генератора
-            g_loss = g_gan_loss + l1_loss * 10.0 + fm_loss * 10.0 + perceptual_loss * 1.0
+            g_loss = g_gan_loss + l1_loss * 10.0 + fm_loss * 15.0 + perceptual_loss * 1.0
 
             g_loss.backward()
             optimizer_G.step()
@@ -142,6 +138,18 @@ def train():
         writer.add_scalar('Loss/L1', l1_loss.item(), epoch)
         writer.add_scalar('Loss/FeatureMatching', fm_loss.item(), epoch)
         writer.add_scalar('Loss/Perceptual', perceptual_loss.item(), epoch)
+
+        # Сохраняем одну сгенерированную картинку каждые 5 эпох
+        if (epoch + 1) % 5 == 0:
+            netG.eval()
+            with torch.no_grad():
+                real_sar, real_optical = next(iter(train_loader))
+                real_sar = real_sar.to(device)
+                fake_optical = netG(real_sar)
+
+                save_image((fake_optical + 1) / 2.0, os.path.join(Config.RESULTS_DIR, f"epoch_{epoch+1}_fake.png"))
+                save_image((real_optical + 1) / 2.0, os.path.join(Config.RESULTS_DIR, f"epoch_{epoch+1}_real.png"))
+
 
 if __name__ == "__main__":
     train()
