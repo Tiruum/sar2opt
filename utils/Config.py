@@ -27,10 +27,10 @@ class Config:
     PREFETCH_FACTOR = 2 # 2
 
     # Losses weights
-    GAN_LOSS_WEIGHT = 1.0
-    L1_LOSS_WEIGHT = 10.0
+    GAN_LOSS_WEIGHT = 0.5
+    L1_LOSS_WEIGHT = 20.0
     FM_LOSS_WEIGHT = 10.0
-    PERCEPTUAL_LOSS_WEIGHT = 1.0
+    PERCEPTUAL_LOSS_WEIGHT = 5.0
     TV_LOSS_WEIGHT = 0.1
 
     # Прочее

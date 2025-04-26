@@ -6,22 +6,53 @@ import torch.nn.functional as F
 from torchvision import models
 from utils.Config import Config
 class GANLoss(nn.Module):
-    """GAN Loss для генератора и дискриминатора"""
+    """
+    GAN Loss для генератора и дискриминатора
+    с поддержкой сглаживания как реальных, так и фейковых меток.
+    """
     def __init__(self, use_lsgan=True):
+        """
+        Args:
+            use_lsgan (bool): если True — используем MSELoss (LSGAN),
+                              иначе BCEWithLogitsLoss (обычный GAN).
+        """
         super(GANLoss, self).__init__()
         if use_lsgan:
             self.loss = nn.MSELoss()
         else:
             self.loss = nn.BCEWithLogitsLoss()
 
-    def get_target_tensor(self, prediction, target_is_real):
+    def get_target_tensor(self, prediction, target_is_real, real_label_smooth=1.0, fake_label_smooth=0.0):
+        """
+        Генерация целевых тензоров для лосса.
+        
+        Args:
+            prediction: выход дискриминатора
+            target_is_real (bool): True — реальные данные, False — фейковые
+            real_label_smooth (float): значение метки для реальных данных (по умолчанию 1.0)
+            fake_label_smooth (float): значение метки для фейковых данных (по умолчанию 0.0)
+        """
         if target_is_real:
-            return torch.ones_like(prediction)
+            return torch.full_like(prediction, real_label_smooth)
         else:
-            return torch.zeros_like(prediction)
+            return torch.full_like(prediction, fake_label_smooth)
 
-    def forward(self, prediction, target_is_real):
-        target_tensor = self.get_target_tensor(prediction, target_is_real)
+    def forward(self, prediction, target_is_real, real_label_smooth=1.0, fake_label_smooth=0.0):
+        """
+        Вычисление лосса.
+        
+        Args:
+            prediction: выход дискриминатора
+            target_is_real (bool): реальные или фейковые данные
+            real_label_smooth (float): сглаживание для реальных
+            fake_label_smooth (float): сглаживание для фейковых
+        """
+        target_tensor = self.get_target_tensor(
+            prediction, 
+            target_is_real, 
+            real_label_smooth=real_label_smooth, 
+            fake_label_smooth=fake_label_smooth
+        )
         return self.loss(prediction, target_tensor)
 
 class L1Loss(nn.Module):

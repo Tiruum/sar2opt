@@ -51,7 +51,6 @@ def train():
     criterionL1 = L1Loss().to(device)
     criterionFM = FeatureMatchingLoss().to(device)
     criterionPerceptual = PerceptualLoss().to(device)
-    criterionTV = total_variation_loss().to(device)
     # Оптимизаторы
     optimizer_G = optim.Adam(netG.parameters(), lr=Config.LEARNING_RATE, betas=(Config.BETA1, Config.BETA2))
     optimizer_D = optim.Adam(netD.parameters(), lr=Config.LEARNING_RATE, betas=(Config.BETA1, Config.BETA2))
@@ -91,7 +90,7 @@ def train():
 
             # Считаем Loss дискриминатора
             d_loss_fake = sum(criterionGAN(fake, False) for fake in pred_fake)
-            d_loss_real = sum(criterionGAN(real, True) for real in pred_real)
+            d_loss_real = sum(criterionGAN(real, True, real_label_smooth=0.9) for real in pred_real)
 
             d_loss = (d_loss_fake + d_loss_real) * 0.5
             d_loss.backward()
@@ -119,7 +118,7 @@ def train():
             perceptual_loss = criterionPerceptual(fake_optical, real_optical.detach())
 
             # Total Variation Loss
-            tv_loss = criterionTV(fake_optical)
+            tv_loss = total_variation_loss(fake_optical)
 
             # Общий Loss генератора
             g_loss = g_gan_loss * Config.GAN_LOSS_WEIGHT + l1_loss * Config.L1_LOSS_WEIGHT + fm_loss * Config.FM_LOSS_WEIGHT + perceptual_loss * Config.PERCEPTUAL_LOSS_WEIGHT + tv_loss * Config.TV_LOSS_WEIGHT
