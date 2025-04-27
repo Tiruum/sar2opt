@@ -32,7 +32,7 @@ class Config:
     FM_LOSS_WEIGHT = 10.0
     PERCEPTUAL_LOSS_WEIGHT = 5.0
     TV_LOSS_WEIGHT = 0.1
-
+    LPIPS_LOSS_WEIGHT = 0.1
     # Прочее
     DEVICE = 'cuda'  # 'cuda' или 'cpu'
 

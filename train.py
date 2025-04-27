@@ -10,7 +10,7 @@ from torchvision.utils import save_image
 
 from models.generator import UNetGenerator
 from models.multiscale_discriminator import MultiscaleDiscriminator
-from models.losses import GANLoss, L1Loss, FeatureMatchingLoss, PerceptualLoss
+from models.losses import GANLoss, L1Loss, FeatureMatchingLoss, LPIPSLoss, PerceptualLoss
 
 from utils.Dataset import train_loader
 from utils.Config import Config
@@ -51,6 +51,7 @@ def train():
     criterionL1 = L1Loss().to(device)
     criterionFM = FeatureMatchingLoss().to(device)
     criterionPerceptual = PerceptualLoss().to(device)
+    criterionLPIPS = LPIPSLoss().to(device)
     # Оптимизаторы
     optimizer_G = optim.Adam(netG.parameters(), lr=Config.LEARNING_RATE, betas=(Config.BETA1, Config.BETA2))
     optimizer_D = optim.Adam(netD.parameters(), lr=Config.LEARNING_RATE, betas=(Config.BETA1, Config.BETA2))
@@ -74,27 +75,29 @@ def train():
             real_optical = real_optical.to(device)
 
             # --------- Обновление дискриминатора ---------
-            netD.requires_grad_(True)
-            optimizer_D.zero_grad()
+            train_discriminator = (epoch % 2 == 0)
+            if train_discriminator:
+                netD.requires_grad_(True)
+                optimizer_D.zero_grad()
 
-            # Генерируем фейковое изображение
-            with torch.no_grad():
-                fake_optical = netG(real_sar)
+                # Генерируем фейковое изображение
+                with torch.no_grad():
+                    fake_optical = netG(real_sar)
 
-            # Конкатенируем SAR + Optical
-            fake_pair = torch.cat((real_sar, fake_optical), dim=1)
-            real_pair = torch.cat((real_sar, real_optical), dim=1)
+                # Конкатенируем SAR + Optical
+                fake_pair = torch.cat((real_sar, fake_optical), dim=1)
+                real_pair = torch.cat((real_sar, real_optical), dim=1)
 
-            pred_fake = netD(fake_pair)
-            pred_real = netD(real_pair)
+                pred_fake = netD(fake_pair)
+                pred_real = netD(real_pair)
 
-            # Считаем Loss дискриминатора
-            d_loss_fake = sum(criterionGAN(fake, False) for fake in pred_fake)
-            d_loss_real = sum(criterionGAN(real, True, real_label_smooth=0.9) for real in pred_real)
+                # Считаем Loss дискриминатора
+                d_loss_fake = sum(criterionGAN(fake, False) for fake in pred_fake)
+                d_loss_real = sum(criterionGAN(real, True, real_label_smooth=0.9) for real in pred_real)
 
-            d_loss = (d_loss_fake + d_loss_real) * 0.5
-            d_loss.backward()
-            optimizer_D.step()
+                d_loss = (d_loss_fake + d_loss_real) * 0.5
+                d_loss.backward()
+                optimizer_D.step()
 
             # --------- Обновление генератора ---------
             netD.requires_grad_(False)
@@ -120,8 +123,16 @@ def train():
             # Total Variation Loss
             tv_loss = total_variation_loss(fake_optical)
 
+            # LPIPS Loss
+            lpips_loss = criterionLPIPS(fake_optical, real_optical.detach())
+
             # Общий Loss генератора
-            g_loss = g_gan_loss * Config.GAN_LOSS_WEIGHT + l1_loss * Config.L1_LOSS_WEIGHT + fm_loss * Config.FM_LOSS_WEIGHT + perceptual_loss * Config.PERCEPTUAL_LOSS_WEIGHT + tv_loss * Config.TV_LOSS_WEIGHT
+            g_loss = g_gan_loss * Config.GAN_LOSS_WEIGHT + \
+                    l1_loss * Config.L1_LOSS_WEIGHT + \
+                    fm_loss * Config.FM_LOSS_WEIGHT + \
+                    perceptual_loss * Config.PERCEPTUAL_LOSS_WEIGHT + \
+                    tv_loss * Config.TV_LOSS_WEIGHT + \
+                    lpips_loss * Config.LPIPS_LOSS_WEIGHT
 
             g_loss.backward()
             optimizer_G.step()
@@ -145,6 +156,9 @@ def train():
         writer.add_scalar('Loss/L1', l1_loss.item(), epoch)
         writer.add_scalar('Loss/FeatureMatching', fm_loss.item(), epoch)
         writer.add_scalar('Loss/Perceptual', perceptual_loss.item(), epoch)
+        writer.add_scalar('Loss/LPIPS', lpips_loss.item(), epoch)
+        writer.add_scalar('Loss/TotalVariation', tv_loss.item(), epoch)
+        writer.add_scalar('Loss/GAN', g_gan_loss.item(), epoch)
 
         # Сохраняем одну сгенерированную картинку каждые 5 эпох
         if (epoch + 1) % 5 == 0:

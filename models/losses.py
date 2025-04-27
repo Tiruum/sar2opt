@@ -5,6 +5,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import models
 from utils.Config import Config
+import lpips
+
 class GANLoss(nn.Module):
     """
     GAN Loss для генератора и дискриминатора
@@ -128,6 +130,18 @@ class PerceptualLoss(nn.Module):
 
         return loss
     
+class LPIPSLoss(nn.Module):
+    """LPIPS Perceptual Loss для генератора"""
+    def __init__(self, net='vgg', device=Config.DEVICE):
+        super(LPIPSLoss, self).__init__()
+        # net: 'vgg' or 'alex'
+        self.lpips = lpips.LPIPS(net=net).to(device)
+
+    def forward(self, fake, real):
+        # expects inputs in [-1,1]
+        return self.lpips(fake, real).mean()
+
+    
 if __name__ == "__main__":
     import torch
 
@@ -145,9 +159,10 @@ if __name__ == "__main__":
     l1_loss = L1Loss()
     fm_loss = FeatureMatchingLoss()
     perceptual_loss = PerceptualLoss(layers=['relu3_3'], device='cpu')
-
+    lpips_loss = LPIPSLoss(net='vgg', device='cpu')
     print(f"GAN Loss Fake: {gan_loss(pred_fake, target_is_real=False).item()}")
     print(f"GAN Loss Real: {gan_loss(pred_real, target_is_real=True).item()}")
     print(f"L1 Pixel Loss: {l1_loss(fake_image, real_image).item()}")
     print(f"Feature Matching Loss: {fm_loss(fake_features, real_features).item()}")
     print(f"Perceptual Loss: {perceptual_loss(fake_image, real_image).item()}")
+    print(f"LPIPS Loss: {lpips_loss(fake_image, real_image).item()}")
