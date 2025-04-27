@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from torchvision import models
 from utils.Config import Config
 import lpips
+from kornia.filters import spatial_gradient
 import kornia.color as Kc
 from kornia.losses import ssim_loss
 
@@ -178,6 +179,30 @@ class SSIMLoss(nn.Module):
                          eps=self.eps,
                          reduction=self.reduction,
                          padding=self.padding)
+    
+class EdgeLoss(nn.Module):
+    """
+    L1 Loss по картам градиентов (sobel/spatial_gradient)
+    Регуляризует чёткость контуров.
+    """
+    def __init__(self, mode: str = 'sobel'):
+        """
+        mode: 'sobel' или 'scharr' (настраивается в spatial_gradient)
+        """
+        super(EdgeLoss, self).__init__()
+        self.l1 = nn.L1Loss()
+        self.mode = mode
+
+    def forward(self, fake: torch.Tensor, real: torch.Tensor) -> torch.Tensor:
+        # Предположим входной fake/real ∈[-1,1], приводим в [0,1]
+        fake01 = (fake + 1) * 0.5
+        real01 = (real + 1) * 0.5
+        # spatial_gradient возвращает тензор shape=(B,C,2,H,W):
+        # два канала — dx и dy
+        fake_grad = spatial_gradient(fake01, mode=self.mode)
+        real_grad = spatial_gradient(real01, mode=self.mode)
+        # считаем L1 по всем каналам и направлениям
+        return self.l1(fake_grad, real_grad.detach())
 
     
 if __name__ == "__main__":
@@ -204,5 +229,6 @@ if __name__ == "__main__":
     print(f"Feature Matching Loss: {fm_loss(fake_features, real_features).item()}")
     print(f"Perceptual Loss: {perceptual_loss(fake_image, real_image).item()}")
     print(f"LPIPS Loss: {lpips_loss(fake_image, real_image).item()}")
-    print('LabColorLoss:', LabColorLoss()(fake_image, real_image).item())
+    print('LabColorLoss (l, ab):', LabColorLoss()(fake_image, real_image))
     print('SSIMLoss:', SSIMLoss()(fake_image, real_image).item())
+    print("Edge:", EdgeLoss()(fake_image, real_image).item())

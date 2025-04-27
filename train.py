@@ -11,7 +11,7 @@ from torchvision.utils import save_image
 from models.generator import UNetGenerator
 from models.multiscale_discriminator import MultiscaleDiscriminator
 from models.losses import (
-    GANLoss, L1Loss, FeatureMatchingLoss,
+    EdgeLoss, GANLoss, L1Loss, FeatureMatchingLoss,
     PerceptualLoss, LPIPSLoss,
     LabColorLoss, SSIMLoss
 )
@@ -74,6 +74,7 @@ def train(run_name: str = None):
     criterionLPIPS = LPIPSLoss().to(device)
     criterionLab = LabColorLoss().to(device)
     criterionSSIM = SSIMLoss().to(device)
+    criterionEdge = EdgeLoss(mode='sobel').to(device)
 
     # Оптимизаторы
     optimizer_G = optim.Adam(netG.parameters(), lr=Config.LEARNING_RATE_G, betas=(Config.BETA1, Config.BETA2))
@@ -139,6 +140,7 @@ def train(run_name: str = None):
             lpips_loss = criterionLPIPS(fake_optical, real_optical.detach())                                    # LPIPS Loss
             lab_l, lab_ab = criterionLab(fake_optical, real_optical)                                            # LabColor (раздельно L и ab)
             g_ssim = criterionSSIM(fake_optical, real_optical)                                                  # SSIM (DSSIM)
+            edge_loss = criterionEdge(fake_optical, real_optical)                                               # Edge Loss
 
             # Общий Loss генератора
             g_loss = g_gan_loss * Config.GAN_LOSS_WEIGHT + \
@@ -149,7 +151,8 @@ def train(run_name: str = None):
                     lpips_loss * Config.LPIPS_LOSS_WEIGHT + \
                     lab_l * Config.LAB_L_LOSS_WEIGHT + \
                     lab_ab * Config.LAB_AB_LOSS_WEIGHT + \
-                    g_ssim * Config.SSIM_LOSS_WEIGHT
+                    g_ssim * Config.SSIM_LOSS_WEIGHT + \
+                    edge_loss + Config.EDGE_LOSS_WEIGHT
 
             g_loss.backward()
             optimizer_G.step()
@@ -194,8 +197,7 @@ def train(run_name: str = None):
         losses_logs["GAN"].append(g_gan_loss.item())
 
         df = pd.DataFrame(losses_logs)
-        df.to_csv(os.path.join(run_name, 'losses_logs.csv'), index=False)
-
+        df.to_csv(os.path.join(Config.RESULTS_DIR, 'losses_logs.csv'), index=False)
 
         os.makedirs(f'{Config.RESULTS_DIR}/train', exist_ok=True)
         # Сохраняем одну сгенерированную картинку каждые 5 эпох
