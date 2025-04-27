@@ -10,12 +10,15 @@ from torchvision.utils import save_image
 
 from models.generator import UNetGenerator
 from models.multiscale_discriminator import MultiscaleDiscriminator
-from models.losses import GANLoss, L1Loss, FeatureMatchingLoss, LPIPSLoss, PerceptualLoss
+from models.losses import (
+    GANLoss, L1Loss, FeatureMatchingLoss,
+    PerceptualLoss, LPIPSLoss,
+    LabColorLoss, SSIMLoss
+)
 
 from utils.Dataset import train_loader
 from utils.Config import Config
 
-import numpy as np
 import pandas as pd
 
 def save_checkpoint(model, optimizer, epoch, path):
@@ -30,10 +33,14 @@ def total_variation_loss(img):
     tv_w = torch.mean(torch.abs(img[:, :, :, :-1] - img[:, :, :, 1:]))
     return tv_h + tv_w
 
-def train():
-    writer = SummaryWriter(log_dir=os.path.join(Config.RESULTS_DIR, 'logs'))
+def train(run_name: str = None):
+    if run_name is None:
+        run_name = datetime.now().strftime("%Y%m%d-%H%M%S")
+    log_dir = os.path.join(Config.RESULTS_DIR, 'logs', run_name)
+    writer = SummaryWriter(log_dir=log_dir)
     device = torch.device(Config.DEVICE)
     losses_logs = {
+        "epoch": [],
         "G_loss": [],
         "D_loss": [],
         "L1": [],
@@ -65,6 +72,9 @@ def train():
     criterionFM = FeatureMatchingLoss().to(device)
     criterionPerceptual = PerceptualLoss().to(device)
     criterionLPIPS = LPIPSLoss().to(device)
+    criterionLab = LabColorLoss().to(device)
+    criterionSSIM = SSIMLoss().to(device)
+
     # Оптимизаторы
     optimizer_G = optim.Adam(netG.parameters(), lr=Config.LEARNING_RATE_G, betas=(Config.BETA1, Config.BETA2))
     optimizer_D = optim.Adam(netD.parameters(), lr=Config.LEARNING_RATE_D, betas=(Config.BETA1, Config.BETA2))
@@ -121,38 +131,25 @@ def train():
             fake_pair = torch.cat((real_sar, fake_optical), dim=1)
             pred_fake = netD(fake_pair)
 
-            # GAN Loss генератора
-            g_gan_loss = sum(criterionGAN(fake, True) for fake in pred_fake)
-
-            # L1 Loss
-            l1_loss = criterionL1(fake_optical, real_optical)
-
-            # Feature Matching Loss
-            fm_loss = sum(criterionFM([fake], [real.detach()]) for fake, real in zip(pred_fake, pred_real))
-
-            # Perceptual Loss
-            perceptual_loss = criterionPerceptual(fake_optical, real_optical.detach())
-
-            # Total Variation Loss
-            tv_loss = total_variation_loss(fake_optical)
-
-            # LPIPS Loss
-            lpips_loss = criterionLPIPS(fake_optical, real_optical.detach())
+            g_gan_loss = sum(criterionGAN(fake, True) for fake in pred_fake)                                    # GAN Loss генератора
+            l1_loss = criterionL1(fake_optical, real_optical)                                                   # L1 Loss
+            fm_loss = sum(criterionFM([fake], [real.detach()]) for fake, real in zip(pred_fake, pred_real))     # Feature Matching Loss
+            perceptual_loss = criterionPerceptual(fake_optical, real_optical.detach())                          # Perceptual Loss
+            tv_loss = total_variation_loss(fake_optical)                                                        # Total Variation Loss
+            lpips_loss = criterionLPIPS(fake_optical, real_optical.detach())                                    # LPIPS Loss
+            lab_l, lab_ab = criterionLab(fake_optical, real_optical)                                            # LabColor (раздельно L и ab)
+            g_ssim = criterionSSIM(fake_optical, real_optical)                                                  # SSIM (DSSIM)
 
             # Общий Loss генератора
-            if i > 15:
-                g_loss = g_gan_loss * Config.GAN_LOSS_WEIGHT + \
-                        l1_loss * Config.L1_LOSS_WEIGHT + \
-                        fm_loss * Config.FM_LOSS_WEIGHT + \
-                        perceptual_loss * Config.PERCEPTUAL_LOSS_WEIGHT + \
-                        tv_loss * Config.TV_LOSS_WEIGHT + \
-                        lpips_loss * Config.LPIPS_LOSS_WEIGHT
-            else:
-                g_loss = l1_loss * Config.L1_LOSS_WEIGHT + \
-                        fm_loss * Config.FM_LOSS_WEIGHT + \
-                        perceptual_loss * Config.PERCEPTUAL_LOSS_WEIGHT + \
-                        tv_loss * Config.TV_LOSS_WEIGHT + \
-                        lpips_loss * Config.LPIPS_LOSS_WEIGHT
+            g_loss = g_gan_loss * Config.GAN_LOSS_WEIGHT + \
+                    l1_loss * Config.L1_LOSS_WEIGHT + \
+                    fm_loss * Config.FM_LOSS_WEIGHT + \
+                    perceptual_loss * Config.PERCEPTUAL_LOSS_WEIGHT + \
+                    tv_loss * Config.TV_LOSS_WEIGHT + \
+                    lpips_loss * Config.LPIPS_LOSS_WEIGHT + \
+                    lab_l * Config.LAB_L_LOSS_WEIGHT + \
+                    lab_ab * Config.LAB_AB_LOSS_WEIGHT + \
+                    g_ssim * Config.SSIM_LOSS_WEIGHT
 
             g_loss.backward()
             optimizer_G.step()
@@ -179,10 +176,14 @@ def train():
         writer.add_scalar('Loss/LPIPS', lpips_loss.item(), epoch)
         writer.add_scalar('Loss/TotalVariation', tv_loss.item(), epoch)
         writer.add_scalar('Loss/GAN', g_gan_loss.item(), epoch)
-
+        writer.add_scalar('Loss/Lab_L', lab_l.item(), epoch)
+        writer.add_scalar('Loss/Lab_ab', lab_ab.item(), epoch)
+        writer.add_scalar('Loss/SSIM', g_ssim.item(), epoch)
+        writer.add_scalar('Loss/TV', tv_loss.item(), epoch)
         writer.close()
 
         # Логируем потери
+        losses_logs["epoch"].append(epoch)
         losses_logs["G_loss"].append(total_g_loss / len(train_loader))
         losses_logs["D_loss"].append(total_d_loss / len(train_loader))
         losses_logs["L1"].append(l1_loss.item())
@@ -193,7 +194,7 @@ def train():
         losses_logs["GAN"].append(g_gan_loss.item())
 
         df = pd.DataFrame(losses_logs)
-        df.to_csv(os.path.join(Config.RESULTS_DIR, 'losses_logs.csv'), index=False)
+        df.to_csv(os.path.join(run_name, 'losses_logs.csv'), index=False)
 
 
         os.makedirs(f'{Config.RESULTS_DIR}/train', exist_ok=True)
@@ -210,4 +211,9 @@ def train():
 
 
 if __name__ == "__main__":
-    train()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--run_name', type=str, default=None,
+                        help='Имя текущего прогона (для TensorBoard)')
+    args = parser.parse_args()
+    train(run_name=args.run_name)

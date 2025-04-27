@@ -6,6 +6,8 @@ import torch.nn.functional as F
 from torchvision import models
 from utils.Config import Config
 import lpips
+import kornia.color as Kc
+from kornia.losses import ssim_loss
 
 class GANLoss(nn.Module):
     """
@@ -140,6 +142,42 @@ class LPIPSLoss(nn.Module):
     def forward(self, fake, real):
         # expects inputs in [-1,1]
         return self.lpips(fake, real).mean()
+    
+class LabColorLoss(nn.Module):
+    """Loss в Lab-пространстве: L и ab каналы"""
+    def __init__(self):
+        super(LabColorLoss, self).__init__()
+
+    def forward(self, fake_rgb, real_rgb):
+        # Проверяем, что вход 3-канальный
+        assert fake_rgb.size(1) == 3 and real_rgb.size(1) == 3, \
+            "LabColorLoss требует 3-канальное RGB изображение"
+        fake_lab = Kc.rgb_to_lab((fake_rgb + 1) * 0.5)
+        real_lab = Kc.rgb_to_lab((real_rgb + 1) * 0.5)
+        l_loss  = F.l1_loss(fake_lab[:, :1], real_lab[:, :1])
+        ab_loss = F.l1_loss(fake_lab[:, 1:], real_lab[:, 1:])
+        return l_loss, ab_loss
+
+
+class SSIMLoss(nn.Module):
+    """SSIM Loss using kornia.losses.ssim_loss (DSSIM)"""
+    def __init__(self, window_size=11, max_val=1.0, eps=1e-12, reduction='mean', padding='same'):
+        super(SSIMLoss, self).__init__()
+        self.window_size = window_size
+        self.max_val = max_val
+        self.eps = eps
+        self.reduction = reduction
+        self.padding = padding
+
+    def forward(self, fake, real):
+        fake01 = (fake + 1) * 0.5
+        real01 = (real + 1) * 0.5
+        return ssim_loss(fake01, real01,
+                         window_size=self.window_size,
+                         max_val=self.max_val,
+                         eps=self.eps,
+                         reduction=self.reduction,
+                         padding=self.padding)
 
     
 if __name__ == "__main__":
@@ -166,3 +204,5 @@ if __name__ == "__main__":
     print(f"Feature Matching Loss: {fm_loss(fake_features, real_features).item()}")
     print(f"Perceptual Loss: {perceptual_loss(fake_image, real_image).item()}")
     print(f"LPIPS Loss: {lpips_loss(fake_image, real_image).item()}")
+    print('LabColorLoss:', LabColorLoss()(fake_image, real_image).item())
+    print('SSIMLoss:', SSIMLoss()(fake_image, real_image).item())
