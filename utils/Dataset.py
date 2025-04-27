@@ -13,7 +13,7 @@ common_transform = A.Compose([
     A.Affine(
         scale=(0.9, 1.1),
         translate_percent=(-0.1, 0.1),
-        rotate=(-15, 15),
+        rotate=(-5, 5),
         border_mode=cv2.BORDER_REFLECT_101,
         p=0.9
     ),
@@ -23,25 +23,25 @@ common_transform = A.Compose([
 
 # Отдельные пайплайны для специфичных аугментаций
 sar_specific = A.Compose([
-    # 1) Случайный Gaussian Blur или Motion Blur
-    A.OneOf([
-        A.GaussianBlur(blur_limit=3, p=1.0),
-        A.MotionBlur(blur_limit=5, p=1.0),
-    ], p=0.3),
+    # # 1) Случайный Gaussian Blur или Motion Blur
+    # A.OneOf([
+    #     A.GaussianBlur(blur_limit=3, p=1.0),
+    #     A.MotionBlur(blur_limit=5, p=1.0),
+    # ], p=0.3),
 
-    # 2) Случайный гауссов шум
-    A.GaussNoise(var_limit=(10.0, 50.0), p=0.5),
+    # # 2) Случайный гауссов шум
+    # A.GaussNoise(var_limit=(10.0, 50.0), p=0.5),
 
-    # 3) Coarse Dropout — выкидываем случайные прямоугольники
-    A.CoarseDropout(max_holes=8, max_height=32, max_width=32, 
-                    min_holes=1, min_height=8, min_width=8, 
-                    fill_value=0, p=0.3),
+    # # 3) Coarse Dropout — выкидываем случайные прямоугольники
+    # A.CoarseDropout(max_holes=8, max_height=32, max_width=32, 
+    #                 min_holes=1, min_height=8, min_width=8, 
+    #                 fill_value=0, p=0.3),
 
-    # 4) Иногда кусочки полностью сбрасываются (как выпадение сигнала)
-    A.OneOf([
-        A.RandomFog(fog_coef_lower=0.1, fog_coef_upper=0.2, p=1.0),
-        A.RandomRain(slant_lower=-10, slant_upper=10, p=1.0),
-    ], p=0.2),
+    # # 4) Иногда кусочки полностью сбрасываются (как выпадение сигнала)
+    # A.OneOf([
+    #     A.RandomFog(fog_coef_lower=0.1, fog_coef_upper=0.2, p=1.0),
+    #     A.RandomRain(slant_lower=-10, slant_upper=10, p=1.0),
+    # ], p=0.2),
 
     # 5) Нормализация + ToTensor
     A.Normalize(mean=(0.5,), std=(0.5,)),

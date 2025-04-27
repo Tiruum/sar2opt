@@ -5,7 +5,7 @@ import torch
 from torchvision.utils import save_image
 from tqdm import tqdm
 
-from models.generator import GlobalGenerator
+from models.generator import UNetGenerator
 from utils.Dataset import test_loader
 from utils.Config import Config
 
@@ -18,7 +18,7 @@ def test():
     device = torch.device(Config.DEVICE)
 
     # Инициализируем генератор
-    netG = GlobalGenerator(
+    netG = UNetGenerator(
         input_nc=Config.INPUT_NC,
         output_nc=Config.OUTPUT_NC,
         ngf=Config.NGF,
@@ -26,7 +26,7 @@ def test():
     ).to(device)
 
     # Путь к чекпоинту генератора
-    checkpoint_path = os.path.join(Config.CHECKPOINTS_DIR, "netG_epoch_200.pth")  # укажи актуальный чекпоинт!
+    checkpoint_path = os.path.join(Config.CHECKPOINTS_DIR, "netG_epoch_300.pth")  # укажи актуальный чекпоинт!
     netG = load_checkpoint(netG, checkpoint_path, device)
     netG.eval()
 

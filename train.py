@@ -15,6 +15,9 @@ from models.losses import GANLoss, L1Loss, FeatureMatchingLoss, LPIPSLoss, Perce
 from utils.Dataset import train_loader
 from utils.Config import Config
 
+import numpy as np
+import pandas as pd
+
 def save_checkpoint(model, optimizer, epoch, path):
     torch.save({
         'epoch': epoch,
@@ -30,6 +33,16 @@ def total_variation_loss(img):
 def train():
     writer = SummaryWriter(log_dir=os.path.join(Config.RESULTS_DIR, 'logs'))
     device = torch.device(Config.DEVICE)
+    losses_logs = {
+        "G_loss": [],
+        "D_loss": [],
+        "L1": [],
+        "FeatureMatching": [],
+        "Perceptual": [],
+        "LPIPS": [],
+        "TotalVariation": [],
+        "GAN": []
+    }
 
     # Инициализация моделей
     netG = UNetGenerator(
@@ -53,8 +66,8 @@ def train():
     criterionPerceptual = PerceptualLoss().to(device)
     criterionLPIPS = LPIPSLoss().to(device)
     # Оптимизаторы
-    optimizer_G = optim.Adam(netG.parameters(), lr=Config.LEARNING_RATE, betas=(Config.BETA1, Config.BETA2))
-    optimizer_D = optim.Adam(netD.parameters(), lr=Config.LEARNING_RATE, betas=(Config.BETA1, Config.BETA2))
+    optimizer_G = optim.Adam(netG.parameters(), lr=Config.LEARNING_RATE_G, betas=(Config.BETA1, Config.BETA2))
+    optimizer_D = optim.Adam(netD.parameters(), lr=Config.LEARNING_RATE_D, betas=(Config.BETA1, Config.BETA2))
 
     # Создание директорий для чекпоинтов
     os.makedirs(Config.CHECKPOINTS_DIR, exist_ok=True)
@@ -75,29 +88,29 @@ def train():
             real_optical = real_optical.to(device)
 
             # --------- Обновление дискриминатора ---------
-            train_discriminator = (epoch % 2 == 0)
-            if train_discriminator:
-                netD.requires_grad_(True)
-                optimizer_D.zero_grad()
+            # train_discriminator = (epoch % 2 == 0)
+            # if train_discriminator:
+            netD.requires_grad_(True)
+            optimizer_D.zero_grad()
 
-                # Генерируем фейковое изображение
-                with torch.no_grad():
-                    fake_optical = netG(real_sar)
+            # Генерируем фейковое изображение
+            with torch.no_grad():
+                fake_optical = netG(real_sar)
 
-                # Конкатенируем SAR + Optical
-                fake_pair = torch.cat((real_sar, fake_optical), dim=1)
-                real_pair = torch.cat((real_sar, real_optical), dim=1)
+            # Конкатенируем SAR + Optical
+            fake_pair = torch.cat((real_sar, fake_optical), dim=1)
+            real_pair = torch.cat((real_sar, real_optical), dim=1)
 
-                pred_fake = netD(fake_pair)
-                pred_real = netD(real_pair)
+            pred_fake = netD(fake_pair)
+            pred_real = netD(real_pair)
 
-                # Считаем Loss дискриминатора
-                d_loss_fake = sum(criterionGAN(fake, False) for fake in pred_fake)
-                d_loss_real = sum(criterionGAN(real, True, real_label_smooth=0.9) for real in pred_real)
+            # Считаем Loss дискриминатора
+            d_loss_fake = sum(criterionGAN(fake, False) for fake in pred_fake)
+            d_loss_real = sum(criterionGAN(real, True, real_label_smooth=0.9) for real in pred_real)
 
-                d_loss = (d_loss_fake + d_loss_real) * 0.5
-                d_loss.backward()
-                optimizer_D.step()
+            d_loss = (d_loss_fake + d_loss_real) * 0.5
+            d_loss.backward()
+            optimizer_D.step()
 
             # --------- Обновление генератора ---------
             netD.requires_grad_(False)
@@ -127,12 +140,19 @@ def train():
             lpips_loss = criterionLPIPS(fake_optical, real_optical.detach())
 
             # Общий Loss генератора
-            g_loss = g_gan_loss * Config.GAN_LOSS_WEIGHT + \
-                    l1_loss * Config.L1_LOSS_WEIGHT + \
-                    fm_loss * Config.FM_LOSS_WEIGHT + \
-                    perceptual_loss * Config.PERCEPTUAL_LOSS_WEIGHT + \
-                    tv_loss * Config.TV_LOSS_WEIGHT + \
-                    lpips_loss * Config.LPIPS_LOSS_WEIGHT
+            if i > 15:
+                g_loss = g_gan_loss * Config.GAN_LOSS_WEIGHT + \
+                        l1_loss * Config.L1_LOSS_WEIGHT + \
+                        fm_loss * Config.FM_LOSS_WEIGHT + \
+                        perceptual_loss * Config.PERCEPTUAL_LOSS_WEIGHT + \
+                        tv_loss * Config.TV_LOSS_WEIGHT + \
+                        lpips_loss * Config.LPIPS_LOSS_WEIGHT
+            else:
+                g_loss = l1_loss * Config.L1_LOSS_WEIGHT + \
+                        fm_loss * Config.FM_LOSS_WEIGHT + \
+                        perceptual_loss * Config.PERCEPTUAL_LOSS_WEIGHT + \
+                        tv_loss * Config.TV_LOSS_WEIGHT + \
+                        lpips_loss * Config.LPIPS_LOSS_WEIGHT
 
             g_loss.backward()
             optimizer_G.step()
@@ -160,6 +180,23 @@ def train():
         writer.add_scalar('Loss/TotalVariation', tv_loss.item(), epoch)
         writer.add_scalar('Loss/GAN', g_gan_loss.item(), epoch)
 
+        writer.close()
+
+        # Логируем потери
+        losses_logs["G_loss"].append(total_g_loss / len(train_loader))
+        losses_logs["D_loss"].append(total_d_loss / len(train_loader))
+        losses_logs["L1"].append(l1_loss.item())
+        losses_logs["FeatureMatching"].append(fm_loss.item())
+        losses_logs["Perceptual"].append(perceptual_loss.item())
+        losses_logs["LPIPS"].append(lpips_loss.item())
+        losses_logs["TotalVariation"].append(tv_loss.item())
+        losses_logs["GAN"].append(g_gan_loss.item())
+
+        df = pd.DataFrame(losses_logs)
+        df.to_csv(os.path.join(Config.RESULTS_DIR, 'losses_logs.csv'), index=False)
+
+
+        os.makedirs(f'{Config.RESULTS_DIR}/train', exist_ok=True)
         # Сохраняем одну сгенерированную картинку каждые 5 эпох
         if (epoch + 1) % 5 == 0:
             netG.eval()
@@ -168,8 +205,8 @@ def train():
                 real_sar = real_sar.to(device)
                 fake_optical = netG(real_sar)
 
-                save_image((fake_optical + 1) / 2.0, os.path.join(Config.RESULTS_DIR, f"epoch_{epoch+1}_fake.png"))
-                save_image((real_optical + 1) / 2.0, os.path.join(Config.RESULTS_DIR, f"epoch_{epoch+1}_real.png"))
+                save_image((fake_optical + 1) / 2.0, os.path.join(f'{Config.RESULTS_DIR}/train', f"epoch_{epoch+1}_fake.png"))
+                save_image((real_optical + 1) / 2.0, os.path.join(f'{Config.RESULTS_DIR}/train', f"epoch_{epoch+1}_real.png"))
 
 
 if __name__ == "__main__":
