@@ -5,7 +5,7 @@ class Config:
     # Параметры обучения
     IMAGE_SIZE = 256
     BATCH_SIZE = 8
-    NUM_EPOCHS = 100
+    NUM_EPOCHS = 300
     LEARNING_RATE_G = 1e-4
     LEARNING_RATE_D = 2e-4
     BETA1 = 0.5  # для Adam оптимизатора

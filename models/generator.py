@@ -57,43 +57,63 @@ class UNetGenerator(nn.Module):
         for i in range(n_blocks):
             use_sa = (i >= n_blocks - 2)
             self.resblocks.append(UNetResidualBlock(ngf*4, use_cbam=True, use_self_att=use_sa))
-        # Decoder (upsampling)
+
         self.dec2 = nn.Sequential(
             nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),
             nn.utils.spectral_norm(nn.Conv2d(ngf*4, ngf*2, kernel_size=3, padding=1)),
             nn.InstanceNorm2d(ngf*2), nn.ReLU(True)
         )
+
         self.dec1 = nn.Sequential(
             nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),
-            nn.utils.spectral_norm(nn.Conv2d(ngf*2, ngf, kernel_size=3, padding=1)),
+            nn.utils.spectral_norm(nn.Conv2d(ngf*2, ngf, kernel_size=3, padding=1)),  # исправили ngf*4 -> ngf*2
             nn.InstanceNorm2d(ngf), nn.ReLU(True)
         )
-        # Final conv
+
         self.final = nn.Sequential(
             nn.ReflectionPad2d(3),
-            nn.utils.spectral_norm(nn.Conv2d(ngf, output_nc, kernel_size=7, padding=0)),
+            nn.utils.spectral_norm(nn.Conv2d(ngf*2, output_nc, kernel_size=7, padding=0)),
             nn.Tanh()
         )
 
+        self.conv_after_cat2 = nn.Sequential(
+            nn.Conv2d(ngf*4, ngf*2, kernel_size=3, padding=1),
+            nn.InstanceNorm2d(ngf*2),
+            nn.ReLU(True),
+            nn.Conv2d(ngf*2, ngf*2, kernel_size=3, padding=1),
+            nn.InstanceNorm2d(ngf*2),
+            nn.ReLU(True)
+        )
+
+        self.conv_after_cat1 = nn.Sequential(
+            nn.Conv2d(ngf*2, ngf*2, kernel_size=3, padding=1),
+            nn.InstanceNorm2d(ngf*2),
+            nn.ReLU(True),
+            nn.Conv2d(ngf*2, ngf*2, kernel_size=3, padding=1),
+            nn.InstanceNorm2d(ngf*2),
+            nn.ReLU(True)
+        )
+
     def forward(self, x):
-        # Encoder
-        x1 = self.initial(x)      # (ngf)
-        x2 = self.enc1(x1)        # (ngf*2)
-        x3 = self.enc2(x2)        # (ngf*4)
-        # Residual blocks
+        x1 = self.initial(x)
+        x2 = self.enc1(x1)
+        x3 = self.enc2(x2)
+
         x4 = x3
         for block in self.resblocks:
             x4 = block(x4)
-        # Decoder + skip connections
-        y2 = self.dec2(x4)        # (ngf*2)
-        y2 = y2 + x2              # skip add
-        y1 = self.dec1(y2)        # (ngf)
-        y1 = y1 + x1              # skip add
-        # Final
+
+        y2 = self.dec2(x4)
+        y2 = torch.cat([y2, x2], dim=1)
+        y2 = self.conv_after_cat2(y2)
+
+        y1 = self.dec1(y2)
+        y1 = torch.cat([y1, x1], dim=1)
+        y1 = self.conv_after_cat1(y1)
+
         out = self.final(y1)
         return out
 
-# Проверка
 if __name__ == "__main__":
     batch, c, h, w = 1, 1, 600, 600
     inp = torch.randn(batch, c, h, w)

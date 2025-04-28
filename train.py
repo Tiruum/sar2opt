@@ -7,6 +7,7 @@ import torch.optim as optim
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
 from torchvision.utils import save_image
+from datetime import datetime
 
 from models.generator import UNetGenerator
 from models.multiscale_discriminator import MultiscaleDiscriminator
@@ -56,7 +57,7 @@ def train(run_name: str = None):
         input_nc=Config.INPUT_NC,
         output_nc=Config.OUTPUT_NC,
         ngf=Config.NGF,
-        n_blocks=9
+        n_blocks=8
     ).to(device)
 
     netD = MultiscaleDiscriminator(

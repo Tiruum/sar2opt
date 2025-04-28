@@ -22,7 +22,7 @@ def test():
         input_nc=Config.INPUT_NC,
         output_nc=Config.OUTPUT_NC,
         ngf=Config.NGF,
-        n_blocks=9
+        n_blocks=8
     ).to(device)
 
     # Путь к чекпоинту генератора
