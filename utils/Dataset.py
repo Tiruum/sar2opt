@@ -1,11 +1,12 @@
 import os
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, Subset
 import torch.nn.functional as F
 import cv2
 import numpy as np
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
+import random
 from .Config import Config
 
 # Трансформации
@@ -165,6 +166,20 @@ test_loader = DataLoader(
     test_dataset,
     batch_size=Config.BATCH_SIZE,
     shuffle=False,
+    num_workers=Config.NUM_WORKERS,
+    pin_memory=True,
+    persistent_workers=Config.PERSISTENT_WORKERS,
+    prefetch_factor=Config.PREFETCH_FACTOR
+)
+
+all_indices = list(range(len(train_dataset)))
+mini_indices = random.sample(all_indices, 100)
+mini_dataset = Subset(train_dataset, mini_indices)
+
+mini_loader = DataLoader(
+    mini_dataset,
+    batch_size=Config.BATCH_SIZE,
+    shuffle=True,
     num_workers=Config.NUM_WORKERS,
     pin_memory=True,
     persistent_workers=Config.PERSISTENT_WORKERS,

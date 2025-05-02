@@ -26,7 +26,7 @@ def test():
     ).to(device)
 
     # Путь к чекпоинту генератора
-    checkpoint_path = os.path.join(Config.CHECKPOINTS_DIR, "netG_epoch_300.pth")  # укажи актуальный чекпоинт!
+    checkpoint_path = os.path.join(Config.CHECKPOINTS_DIR, "netG_epoch_290.pth")  # укажи актуальный чекпоинт!
     netG = load_checkpoint(netG, checkpoint_path, device)
     netG.eval()
 

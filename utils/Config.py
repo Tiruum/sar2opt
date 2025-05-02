@@ -39,16 +39,16 @@ class Config:
     # SSIM_LOSS_WEIGHT       = 3.0    # SSIM: повышает структурную консистентность и чёткость контуров, λ_SSIM ∈ [0.1, 5].
     # EDGE_LOSS_WEIGHT       = 3.0
 
-    GAN_LOSS_WEIGHT        = 0.5
-    L1_LOSS_WEIGHT         = 120.0
-    FM_LOSS_WEIGHT         = 5.0
-    PERCEPTUAL_LOSS_WEIGHT = 0.5
-    LPIPS_LOSS_WEIGHT      = 0.05
-    TV_LOSS_WEIGHT         = 1.0
-    LAB_L_LOSS_WEIGHT      = 2.0
-    LAB_AB_LOSS_WEIGHT     = 0.5
-    SSIM_LOSS_WEIGHT       = 5.0
-    EDGE_LOSS_WEIGHT       = 5.0
+    GAN_LOSS_WEIGHT        = 1.5
+    L1_LOSS_WEIGHT         = 100.0
+    FM_LOSS_WEIGHT         = 1.0
+    PERCEPTUAL_LOSS_WEIGHT = 0.3
+    LPIPS_LOSS_WEIGHT      = 0.2
+    TV_LOSS_WEIGHT         = 1.5
+    LAB_L_LOSS_WEIGHT      = 1.0
+    LAB_AB_LOSS_WEIGHT     = 1.0
+    SSIM_LOSS_WEIGHT       = 1.0
+    EDGE_LOSS_WEIGHT       = 2.0
 
 
     # Прочее

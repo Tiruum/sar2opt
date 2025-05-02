@@ -17,7 +17,7 @@ from models.losses import (
     LabColorLoss, SSIMLoss
 )
 
-from utils.Dataset import train_loader
+from utils.Dataset import train_loader, mini_loader
 from utils.Config import Config
 
 import pandas as pd
@@ -34,23 +34,19 @@ def total_variation_loss(img):
     tv_w = torch.mean(torch.abs(img[:, :, :, :-1] - img[:, :, :, 1:]))
     return tv_h + tv_w
 
-def train(run_name: str = None):
+def load_checkpoint(model, optimizer, checkpoint_path, device):
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    start_epoch = checkpoint['epoch'] + 1
+    return model, optimizer, start_epoch
+
+def train(run_name: str = None, resume_g_path: str = None, resume_d_path: str = None):
+    device = torch.device(Config.DEVICE)
     if run_name is None:
-        run_name = datetime.now().strftime("%Y%m%d-%H%M%S")
+        run_name = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
     log_dir = os.path.join(Config.RESULTS_DIR, 'logs', run_name)
     writer = SummaryWriter(log_dir=log_dir)
-    device = torch.device(Config.DEVICE)
-    losses_logs = {
-        "epoch": [],
-        "G_loss": [],
-        "D_loss": [],
-        "L1": [],
-        "FeatureMatching": [],
-        "Perceptual": [],
-        "LPIPS": [],
-        "TotalVariation": [],
-        "GAN": []
-    }
 
     # Инициализация моделей
     netG = UNetGenerator(
@@ -81,19 +77,25 @@ def train(run_name: str = None):
     optimizer_G = optim.Adam(netG.parameters(), lr=Config.LEARNING_RATE_G, betas=(Config.BETA1, Config.BETA2))
     optimizer_D = optim.Adam(netD.parameters(), lr=Config.LEARNING_RATE_D, betas=(Config.BETA1, Config.BETA2))
 
+    start_epoch = 0
+    if resume_g_path and resume_d_path:
+        print(f"Resuming training from checkpoints:\nG: {resume_g_path}\nD: {resume_d_path}")
+        netG, optimizer_G, start_epoch = load_checkpoint(netG, optimizer_G, resume_g_path, device)
+        netD, optimizer_D, _ = load_checkpoint(netD, optimizer_D, resume_d_path, device)
+
     # Создание директорий для чекпоинтов
     os.makedirs(Config.CHECKPOINTS_DIR, exist_ok=True)
     os.makedirs(Config.RESULTS_DIR, exist_ok=True)
 
     # Основной цикл обучения
-    for epoch in range(Config.NUM_EPOCHS):
+    for epoch in range(start_epoch, Config.NUM_EPOCHS):
         netG.train()
         netD.train()
 
         total_g_loss = 0
         total_d_loss = 0
 
-        progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{Config.NUM_EPOCHS}")
+        progress_bar = tqdm(mini_loader, desc=f"Epoch {epoch+1}/{Config.NUM_EPOCHS}")
 
         for i, (real_sar, real_optical) in enumerate(progress_bar):
             real_sar = real_sar.to(device)
@@ -144,7 +146,8 @@ def train(run_name: str = None):
             edge_loss = criterionEdge(fake_optical, real_optical)                                               # Edge Loss
 
             # Общий Loss генератора
-            g_loss = g_gan_loss * Config.GAN_LOSS_WEIGHT + \
+            gan_loss_weight = Config.GAN_LOSS_WEIGHT if epoch > 100 else Config.GAN_LOSS_WEIGHT*0.4  # Уменьшаем вес GAN Loss после 100 эпох
+            g_loss = g_gan_loss * gan_loss_weight + \
                     l1_loss * Config.L1_LOSS_WEIGHT + \
                     fm_loss * Config.FM_LOSS_WEIGHT + \
                     perceptual_loss * Config.PERCEPTUAL_LOSS_WEIGHT + \
@@ -186,37 +189,30 @@ def train(run_name: str = None):
         writer.add_scalar('Loss/TV', tv_loss.item(), epoch)
         writer.close()
 
-        # Логируем потери
-        losses_logs["epoch"].append(epoch)
-        losses_logs["G_loss"].append(total_g_loss / len(train_loader))
-        losses_logs["D_loss"].append(total_d_loss / len(train_loader))
-        losses_logs["L1"].append(l1_loss.item())
-        losses_logs["FeatureMatching"].append(fm_loss.item())
-        losses_logs["Perceptual"].append(perceptual_loss.item())
-        losses_logs["LPIPS"].append(lpips_loss.item())
-        losses_logs["TotalVariation"].append(tv_loss.item())
-        losses_logs["GAN"].append(g_gan_loss.item())
-
-        df = pd.DataFrame(losses_logs)
-        df.to_csv(os.path.join(Config.RESULTS_DIR, 'losses_logs.csv'), index=False)
-
         os.makedirs(f'{Config.RESULTS_DIR}/train', exist_ok=True)
-        # Сохраняем одну сгенерированную картинку каждые 5 эпох
-        if (epoch + 1) % 5 == 0:
+        # Сохраняем одну сгенерированную картинку каждые 10 эпох
+        if (epoch + 1) % 10 == 0:
             netG.eval()
             with torch.no_grad():
                 real_sar, real_optical = next(iter(train_loader))
                 real_sar = real_sar.to(device)
+                real_optical = real_optical.to(device)
                 fake_optical = netG(real_sar)
 
-                save_image((fake_optical + 1) / 2.0, os.path.join(f'{Config.RESULTS_DIR}/train', f"epoch_{epoch+1}_fake.png"))
-                save_image((real_optical + 1) / 2.0, os.path.join(f'{Config.RESULTS_DIR}/train', f"epoch_{epoch+1}_real.png"))
+                concatenated = torch.cat(
+                    ((fake_optical + 1) / 2.0, (real_optical + 1) / 2.0),
+                    dim=2
+                )
+
+                save_image(concatenated, os.path.join(f'{Config.RESULTS_DIR}/train', f"epoch_{epoch+1}.png"))
 
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument('--run_name', type=str, default=None,
-                        help='Имя текущего прогона (для TensorBoard)')
+    parser.add_argument('--run_name', type=str, default=None, help='Имя текущего прогона (для TensorBoard)')
+    parser.add_argument('--resume_g', type=str, default=None, help='Путь до чекпоинта генератора')
+    parser.add_argument('--resume_d', type=str, default=None, help='Путь до чекпоинта дискриминатора')
     args = parser.parse_args()
-    train(run_name=args.run_name)
+
+    train(run_name=args.run_name, resume_g_path=args.resume_g, resume_d_path=args.resume_d)

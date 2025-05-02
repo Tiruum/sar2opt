@@ -2,10 +2,10 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from utils.Config import Config
 
-df = pd.read_csv(f'{Config.RESULTS_DIR}/losses_logs.csv')
+df = pd.read_csv(f'tensorboard_losses.csv')
 
 # Список всех потерь, которые нужно отобразить
-losses = ['G_loss', 'D_loss', 'L1', 'FeatureMatching', 'Perceptual', 'LPIPS', 'TotalVariation', 'GAN']
+losses = ['Loss/Generator', 'Loss/Discriminator', 'Loss/L1', 'Loss/FeatureMatching', 'Loss/Perceptual', 'Loss/LPIPS', 'Loss/TotalVariation', 'Loss/GAN', 'Loss/Lab_L', 'Loss/Lab_ab', 'Loss/SSIM', 'Loss/TV']
 
 # Рассчитываем количество строк для 3 столбцов
 n_cols = 3

@@ -36,61 +36,75 @@ class UNetGenerator(nn.Module):
     """U-Net generator with skip connections, spectral norm and adaptive attention."""
     def __init__(self, input_nc=1, output_nc=3, ngf=64, n_blocks=8):
         super(UNetGenerator, self).__init__()
-        # Initial conv with spectral norm
+
+        # Initial block
         self.initial = nn.Sequential(
             nn.ReflectionPad2d(3),
             nn.utils.spectral_norm(nn.Conv2d(input_nc, ngf, kernel_size=7, padding=0)),
             nn.InstanceNorm2d(ngf),
             nn.ReLU(True)
         )
+
         # Encoder
         self.enc1 = nn.Sequential(
             nn.utils.spectral_norm(nn.Conv2d(ngf, ngf*2, kernel_size=3, stride=2, padding=1)),
-            nn.InstanceNorm2d(ngf*2), nn.ReLU(True)
+            nn.InstanceNorm2d(ngf*2),
+            nn.ReLU(True)
         )
         self.enc2 = nn.Sequential(
             nn.utils.spectral_norm(nn.Conv2d(ngf*2, ngf*4, kernel_size=3, stride=2, padding=1)),
-            nn.InstanceNorm2d(ngf*4), nn.ReLU(True)
+            nn.InstanceNorm2d(ngf*4),
+            nn.ReLU(True)
         )
-        # Residual blocks
-        self.resblocks = nn.ModuleList()
-        for i in range(n_blocks):
-            use_sa = (i >= n_blocks - 2)
-            self.resblocks.append(UNetResidualBlock(ngf*4, use_cbam=True, use_self_att=use_sa))
 
+        # Residual blocks
+        self.resblocks = nn.ModuleList([
+            UNetResidualBlock(ngf*4, use_cbam=True, use_self_att=(i >= n_blocks - 2))
+            for i in range(n_blocks)
+        ])
+
+        # Decoder part 1 — сохраняем двойную свёртку для dec2
         self.dec2 = nn.Sequential(
             nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),
+            nn.utils.spectral_norm(nn.Conv2d(ngf*4, ngf*4, kernel_size=3, padding=1)),
+            nn.GroupNorm(8, ngf*4),
+            nn.ReLU(True),
             nn.utils.spectral_norm(nn.Conv2d(ngf*4, ngf*2, kernel_size=3, padding=1)),
-            nn.InstanceNorm2d(ngf*2), nn.ReLU(True)
+            nn.GroupNorm(8, ngf*2),
+            nn.ReLU(True)
         )
 
+        # Decoder part 2 — упрощаем dec1, меньше capacity
         self.dec1 = nn.Sequential(
             nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),
-            nn.utils.spectral_norm(nn.Conv2d(ngf*2, ngf, kernel_size=3, padding=1)),  # исправили ngf*4 -> ngf*2
-            nn.InstanceNorm2d(ngf), nn.ReLU(True)
+            nn.utils.spectral_norm(nn.Conv2d(ngf*2, ngf, kernel_size=3, padding=1)),
+            nn.GroupNorm(8, ngf),
+            nn.ReLU(True)
         )
 
+        # Final conv
         self.final = nn.Sequential(
             nn.ReflectionPad2d(3),
-            nn.utils.spectral_norm(nn.Conv2d(ngf*2, output_nc, kernel_size=7, padding=0)),
+            nn.utils.spectral_norm(nn.Conv2d(ngf, output_nc, kernel_size=7, padding=0)),
             nn.Tanh()
         )
 
+        # Reduce conv_after_cat1 output channels to ngf to avoid overcapacity
         self.conv_after_cat2 = nn.Sequential(
             nn.Conv2d(ngf*4, ngf*2, kernel_size=3, padding=1),
-            nn.InstanceNorm2d(ngf*2),
+            nn.GroupNorm(8, ngf*2),
             nn.ReLU(True),
             nn.Conv2d(ngf*2, ngf*2, kernel_size=3, padding=1),
-            nn.InstanceNorm2d(ngf*2),
+            nn.GroupNorm(8, ngf*2),
             nn.ReLU(True)
         )
 
         self.conv_after_cat1 = nn.Sequential(
-            nn.Conv2d(ngf*2, ngf*2, kernel_size=3, padding=1),
-            nn.InstanceNorm2d(ngf*2),
+            nn.Conv2d(ngf*2, ngf, kernel_size=3, padding=1),
+            nn.GroupNorm(8, ngf),
             nn.ReLU(True),
-            nn.Conv2d(ngf*2, ngf*2, kernel_size=3, padding=1),
-            nn.InstanceNorm2d(ngf*2),
+            nn.Conv2d(ngf, ngf, kernel_size=3, padding=1),
+            nn.GroupNorm(8, ngf),
             nn.ReLU(True)
         )
 
