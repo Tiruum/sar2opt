@@ -7,7 +7,7 @@ from models.discriminator import NLayerDiscriminator
 
 class MultiscaleDiscriminator(nn.Module):
     """Многомасштабный дискриминатор"""
-    def __init__(self, input_nc, ndf=64, n_layers=3, num_D=3):
+    def __init__(self, input_nc, ndf=64, n_layers=3, num_D=4):
         """
         input_nc: число каналов на входе (input + target)
         ndf: количество фильтров
@@ -43,16 +43,16 @@ class MultiscaleDiscriminator(nn.Module):
         return results
     
 if __name__ == "__main__":
-    batch_size = 1
+    batch_size = 8
     input_nc = 1
     output_nc = 3
-    image_size = 600
+    image_size = 256
 
     # Создаем случайный input (конкатенированное изображение)
     x = torch.randn((batch_size, input_nc + output_nc, image_size, image_size))
 
     # Создаем многомасштабный дискриминатор
-    model = MultiscaleDiscriminator(input_nc=input_nc + output_nc, ndf=64, n_layers=3, num_D=3)
+    model = MultiscaleDiscriminator(input_nc=input_nc + output_nc, ndf=64, n_layers=1, num_D=4)
 
     # Прогоняем
     outputs = model(x)

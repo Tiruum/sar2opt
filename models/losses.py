@@ -93,7 +93,7 @@ class PerceptualLoss(nn.Module):
     def __init__(self, layers=['relu3_3'], device=Config.DEVICE):
         super(PerceptualLoss, self).__init__()
         self.device = device
-        vgg = models.vgg16(pretrained=True).features.to(device).eval()
+        vgg = models.vgg16(weights=models.VGG16_Weights.DEFAULT).features.to(device).eval()
         
         self.layers = layers
         self.blocks = nn.ModuleList()

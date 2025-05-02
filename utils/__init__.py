@@ -28,7 +28,7 @@ def visualize_batch(
         fig = plt.figure(figsize=(8, batch_size * 2))
 
         if title:
-            fig.suptitle(title, fontsize=14, y=0.96)
+            fig.suptitle(title, fontsize=14, y=0.99)
 
         gs = gridspec.GridSpec(
             batch_size, 5,
