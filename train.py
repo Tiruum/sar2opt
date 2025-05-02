@@ -6,7 +6,6 @@ import torch.nn as nn
 import torch.optim as optim
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
-from torchvision.utils import save_image
 from datetime import datetime
 
 from models.generator import UNetGenerator
@@ -17,6 +16,7 @@ from models.losses import (
     LabColorLoss, SSIMLoss
 )
 
+from utils import visualize_batch
 from utils.Dataset import train_loader, mini_loader
 from utils.Config import Config
 
@@ -102,8 +102,6 @@ def train(run_name: str = None, resume_g_path: str = None, resume_d_path: str = 
             real_optical = real_optical.to(device)
 
             # --------- Обновление дискриминатора ---------
-            # train_discriminator = (epoch % 2 == 0)
-            # if train_discriminator:
             netD.requires_grad_(True)
             optimizer_D.zero_grad()
 
@@ -199,13 +197,11 @@ def train(run_name: str = None, resume_g_path: str = None, resume_d_path: str = 
                 real_optical = real_optical.to(device)
                 fake_optical = netG(real_sar)
 
-                concatenated = torch.cat(
-                    ((fake_optical + 1) / 2.0, (real_optical + 1) / 2.0),
-                    dim=2
-                )
-
-                save_image(concatenated, os.path.join(f'{Config.RESULTS_DIR}/train', f"epoch_{epoch+1}.png"))
-
+                visualize_batch(real_sar,
+                                fake_optical,
+                                real_optical,
+                                save_path=os.path.join(f'{Config.RESULTS_DIR}/train', f"epoch_{epoch+1}.png"),
+                                max_rows=6)
 
 if __name__ == "__main__":
     import argparse

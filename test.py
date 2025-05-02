@@ -6,10 +6,12 @@ from torchvision.utils import save_image
 from tqdm import tqdm
 
 from models.generator import UNetGenerator
+from utils import visualize_batch
 from utils.Dataset import test_loader
 from utils.Config import Config
+from typing import Literal
 
-def load_checkpoint(model, checkpoint_path, device='cuda'):
+def load_checkpoint(model, checkpoint_path, device=Config.DEVICE):
     checkpoint = torch.load(checkpoint_path, map_location=device)
     model.load_state_dict(checkpoint['model_state_dict'])
     return model
@@ -26,19 +28,13 @@ def test():
     ).to(device)
 
     # Путь к чекпоинту генератора
-    checkpoint_path = os.path.join(Config.CHECKPOINTS_DIR, "netG_epoch_290.pth")  # укажи актуальный чекпоинт!
+    checkpoint_path = os.path.join(Config.CHECKPOINTS_DIR, "netG_epoch_300.pth")  # укажи актуальный чекпоинт!
     netG = load_checkpoint(netG, checkpoint_path, device)
     netG.eval()
 
     # Создаем директории для сохранения результатов
-    # save_dir_fake = os.path.join(Config.RESULTS_DIR, "test", "fake")
-    # save_dir_real = os.path.join(Config.RESULTS_DIR, "test", "real")
-    # save_dir_sar = os.path.join(Config.RESULTS_DIR, "test", "sar")
-    save_dir_concatenated = os.path.join(Config.RESULTS_DIR, "test", "concatenated")
-    # os.makedirs(save_dir_fake, exist_ok=True)
-    # os.makedirs(save_dir_real, exist_ok=True)
-    # os.makedirs(save_dir_sar, exist_ok=True)
-    os.makedirs(save_dir_concatenated, exist_ok=True)
+    save_dir = os.path.join(Config.RESULTS_DIR, "test")
+    os.makedirs(save_dir, exist_ok=True)
 
     # Прогоняем тест
     with torch.no_grad():
@@ -48,19 +44,8 @@ def test():
 
             fake_optical = netG(sar)
 
-            # Нормализуем в [0,1] для сохранения
-            fake_optical_vis = (fake_optical + 1) / 2.0
-            real_optical_vis = (real_optical + 1) / 2.0
-            sar_vis = (sar + 1) / 2.0
-            sar_vis = sar_vis.repeat(1, 3, 1, 1)
-
-            # Склеиваем изображения по вертикали
-            concatenated_output = torch.cat((fake_optical_vis, real_optical_vis, sar_vis), dim=2)
-
-            # save_image(fake_optical_vis, os.path.join(save_dir_fake, f"{idx:04d}_fake.png"))
-            # save_image(real_optical_vis, os.path.join(save_dir_real, f"{idx:04d}_real.png"))
-            # save_image(sar_vis, os.path.join(save_dir_sar, f"{idx:04d}_sar.png"))
-            save_image(concatenated_output, os.path.join(save_dir_concatenated, f"{idx:04d}_concatenated.png"))
-
+            visualize_batch(sar, fake_optical, real_optical,
+                            save_path=os.path.join(f'{save_dir}', f"{idx:04d}.png"),
+                            max_rows=6, mode='quality')
 if __name__ == "__main__":
     test()
