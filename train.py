@@ -7,6 +7,8 @@ import torch.optim as optim
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
+import shutil
+from time import time
 
 from models.generator import UNetGenerator
 from models.multiscale_discriminator import MultiscaleDiscriminator
@@ -16,11 +18,12 @@ from models.losses import (
     LabColorLoss, SSIMLoss
 )
 
-from utils import visualize_batch
+from utils import sec2hhmmss, visualize_batch
 from utils.Dataset import train_loader, mini_loader
 from utils.Config import Config
+from utils.Logger import Logger
 
-import pandas as pd
+logger = Logger(name="SAR2OPT")
 
 def save_checkpoint(model, optimizer, epoch, path):
     torch.save({
@@ -46,6 +49,14 @@ def train(run_name: str = None, resume_g_path: str = None, resume_d_path: str = 
     if run_name is None:
         run_name = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
     log_dir = os.path.join(Config.RESULTS_DIR, 'logs', run_name)
+    
+    # Исправляем удаление директории
+    if os.path.exists(log_dir):
+        try:
+            shutil.rmtree(log_dir)
+        except PermissionError:
+            logger.warning(f"Не удалось удалить директорию {log_dir}. Логи будут добавлены к существующим.")
+    
     writer = SummaryWriter(log_dir=log_dir)
 
     # Инициализация моделей
@@ -77,9 +88,14 @@ def train(run_name: str = None, resume_g_path: str = None, resume_d_path: str = 
     optimizer_G = optim.Adam(netG.parameters(), lr=Config.LEARNING_RATE_G, betas=(Config.BETA1, Config.BETA2))
     optimizer_D = optim.Adam(netD.parameters(), lr=Config.LEARNING_RATE_D, betas=(Config.BETA1, Config.BETA2))
 
+    val_iter = iter(train_loader)
+    fixed_real_sar, fixed_real_optical = next(val_iter)
+    fixed_real_sar = fixed_real_sar.to(device)
+    fixed_real_optical = fixed_real_optical.to(device)
+
     start_epoch = 0
     if resume_g_path and resume_d_path:
-        print(f"Resuming training from checkpoints:\nG: {resume_g_path}\nD: {resume_d_path}")
+        logger.info(f"Resuming training from checkpoints:\nG: {resume_g_path}\nD: {resume_d_path}")
         netG, optimizer_G, start_epoch = load_checkpoint(netG, optimizer_G, resume_g_path, device)
         netD, optimizer_D, _ = load_checkpoint(netD, optimizer_D, resume_d_path, device)
 
@@ -95,7 +111,7 @@ def train(run_name: str = None, resume_g_path: str = None, resume_d_path: str = 
         total_g_loss = 0
         total_d_loss = 0
 
-        progress_bar = tqdm(mini_loader, desc=f"Epoch {epoch+1}/{Config.NUM_EPOCHS}")
+        progress_bar = tqdm(mini_loader, desc=f"Epoch {epoch+1}/{Config.NUM_EPOCHS}", ascii=" ▏▎▍▌▋▊▉█", smoothing=0.5)
 
         for i, (real_sar, real_optical) in enumerate(progress_bar):
             real_sar = real_sar.to(device)
@@ -185,23 +201,19 @@ def train(run_name: str = None, resume_g_path: str = None, resume_d_path: str = 
         writer.add_scalar('Loss/Lab_ab', lab_ab.item(), epoch)
         writer.add_scalar('Loss/SSIM', g_ssim.item(), epoch)
         writer.add_scalar('Loss/TV', tv_loss.item(), epoch)
-        writer.close()
+        writer.add_scalar('Loss/Edge', edge_loss.item(), epoch)
 
         os.makedirs(f'{Config.RESULTS_DIR}/train', exist_ok=True)
         # Сохраняем одну сгенерированную картинку каждые 10 эпох
         if (epoch + 1) % 10 == 0:
             netG.eval()
             with torch.no_grad():
-                real_sar, real_optical = next(iter(train_loader))
-                real_sar = real_sar.to(device)
-                real_optical = real_optical.to(device)
-                fake_optical = netG(real_sar)
+                fake_optical = netG(fixed_real_sar)
 
-                visualize_batch(real_sar,
-                                fake_optical,
-                                real_optical,
+                visualize_batch(fixed_real_sar, fake_optical, fixed_real_optical,
                                 save_path=os.path.join(f'{Config.RESULTS_DIR}/train', f"epoch_{epoch+1}.png"),
-                                max_rows=6)
+                                max_rows=6, mode='quality', title=f"Epoch {epoch+1}")
+    writer.close()
 
 if __name__ == "__main__":
     import argparse
@@ -210,5 +222,7 @@ if __name__ == "__main__":
     parser.add_argument('--resume_g', type=str, default=None, help='Путь до чекпоинта генератора')
     parser.add_argument('--resume_d', type=str, default=None, help='Путь до чекпоинта дискриминатора')
     args = parser.parse_args()
-
+    start_time = time()
+    logger.info(f"Начало обучения")
     train(run_name=args.run_name, resume_g_path=args.resume_g, resume_d_path=args.resume_d)
+    logger.success(f"Обучение  завершено ({sec2hhmmss(time() - start_time):.2f})")

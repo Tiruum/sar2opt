@@ -4,8 +4,8 @@ from utils.Config import Config
 
 df = pd.read_csv(f'tensorboard_losses.csv')
 
-# Список всех потерь, которые нужно отобразить
-losses = ['Loss/Generator', 'Loss/Discriminator', 'Loss/L1', 'Loss/FeatureMatching', 'Loss/Perceptual', 'Loss/LPIPS', 'Loss/TotalVariation', 'Loss/GAN', 'Loss/Lab_L', 'Loss/Lab_ab', 'Loss/SSIM', 'Loss/TV']
+losses = df.columns[1:]
+print(f'Losses: {losses}')
 
 # Рассчитываем количество строк для 3 столбцов
 n_cols = 3
@@ -31,5 +31,6 @@ for i in range(len(losses), n_rows * n_cols):
 # Настраиваем общий макет
 plt.tight_layout()
 plt.subplots_adjust(top=0.92)  # Освобождаем место для общего заголовка
-plt.show()
+plt.savefig('losses_plot.png', dpi=300, bbox_inches='tight')
+# plt.show()
 

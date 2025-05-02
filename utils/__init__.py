@@ -8,7 +8,8 @@ from torchvision.utils import save_image
 def visualize_batch(
     real_sar, fake_optical, real_optical,
     save_path='results/batch_output.png',
-    max_rows=8, cmap='inferno', mode: Literal['quality', 'fast'] = 'quality'
+    max_rows=8, cmap='inferno', mode: Literal['quality', 'fast'] = 'quality',
+    title: str = None
 ):
     batch_size = min(real_sar.size(0), max_rows)
 
@@ -25,6 +26,10 @@ def visualize_batch(
         vmin, vmax = all_diffs.min().item(), all_diffs.max().item()
 
         fig = plt.figure(figsize=(8, batch_size * 2))
+
+        if title:
+            fig.suptitle(title, fontsize=14, y=0.96)
+
         gs = gridspec.GridSpec(
             batch_size, 5,
             width_ratios=[1, 1, 1, 1, 0.05],
@@ -63,7 +68,8 @@ def visualize_batch(
         cbar_ax.set_title('Diff', fontsize=9)
 
         # Минимальные отступы по краям
-        plt.subplots_adjust(left=0.01, right=0.94, top=0.97, bottom=0.03)
+        top_margin = 0.94 if title else 0.97
+        plt.subplots_adjust(left=0.01, right=0.94, top=top_margin, bottom=0.03)
 
         plt.savefig(save_path, dpi=300)
         plt.close()
@@ -84,3 +90,15 @@ def visualize_batch(
         save_image(concatenated, save_path)
     else:
         raise ValueError("Invalid mode. Use 'quality' or 'fast'.")
+    
+def sec2hhmmss(total_seconds: int) -> str:
+    """
+    Переводит целое число секунд в строку формата HH:mm:SS.
+    
+    Пример:
+        sec2hhmmss(3661)  # → "01:01:01"
+    """
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    seconds = total_seconds % 60
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"

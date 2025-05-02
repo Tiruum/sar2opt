@@ -2,14 +2,12 @@
 
 import os
 import torch
-from torchvision.utils import save_image
 from tqdm import tqdm
 
 from models.generator import UNetGenerator
 from utils import visualize_batch
 from utils.Dataset import test_loader
 from utils.Config import Config
-from typing import Literal
 
 def load_checkpoint(model, checkpoint_path, device=Config.DEVICE):
     checkpoint = torch.load(checkpoint_path, map_location=device)
