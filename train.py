@@ -98,7 +98,7 @@ def train_epoch(
         with autocast(device_type=amp_device_type, enabled=Config.USE_AMP):
             # Снова прогоняем (чтобы получить свежие данные после обновления дискриминатора)
             fake_optical = netG(real_sar)
-            
+
             # Если используем AMP, принудительно приводим к float32 для правильной цветопередачи
             if Config.USE_AMP:
                 fake_optical = fake_optical.float()
@@ -115,7 +115,8 @@ def train_epoch(
             lpips_loss = crits['LPIPS'](fake_optical, real_optical.detach())                                    # LPIPS Loss
             lab_l, lab_ab = crits['Lab'](fake_optical, real_optical)                                            # LabColor (раздельно L и ab)
             g_ssim = crits['SSIM'](fake_optical, real_optical)                                                  # SSIM (DSSIM)
-            edge_loss = crits['Edge'](fake_optical, real_optical)                                               # Edge Loss
+            edge_loss = crits['Edge'](fake_optical, real_optical)  
+            color_hist_loss = crits['Color_hist'](fake_optical, real_optical)  # Color Histogram Loss
 
             # Общий Loss генератора с весами
             g_loss = (
@@ -128,7 +129,8 @@ def train_epoch(
                 lab_l * Config.LAB_L_LOSS_WEIGHT +
                 lab_ab * Config.LAB_AB_LOSS_WEIGHT +
                 g_ssim * Config.SSIM_LOSS_WEIGHT +
-                edge_loss * Config.EDGE_LOSS_WEIGHT
+                edge_loss * Config.EDGE_LOSS_WEIGHT +
+                color_hist_loss * Config.COLOR_HIST_LOSS_WEIGHT
             )
             
             # Проверка на NaN/Inf
@@ -162,7 +164,8 @@ def train_epoch(
         'Lab_L': lab_l.item(), 
         'Lab_ab': lab_ab.item(),
         'SSIM': g_ssim.item(),
-        'Edge': edge_loss.item()
+        'Edge': edge_loss.item(),
+        'Color_hist': color_hist_loss.item()
     }
 
 def val_epoch(
@@ -174,7 +177,6 @@ def val_epoch(
 ) -> Dict[str, float]:
     netG.eval()
     val_metrics = {
-        'FM': 0.0,
         'L1': 0.0,
         'Perceptual': 0.0,
         'LPIPS': 0.0,
@@ -183,6 +185,7 @@ def val_epoch(
         'SSIM': 0.0,
         'Edge': 0.0,
         'TV': 0.0,
+        'Color_hist': 0.0
     }
 
     with torch.no_grad():
@@ -203,6 +206,7 @@ def val_epoch(
                 val_metrics['Lab_ab'] += l_ab.item()
                 val_metrics['SSIM'] += crits['SSIM'](fake_optical, real_optical).item()
                 val_metrics['Edge'] += crits['Edge'](fake_optical, real_optical).item()
+                val_metrics['Color_hist'] += crits['Color_hist'](fake_optical, real_optical).item()
 
     return val_metrics
 

@@ -37,6 +37,7 @@ class Config:
     LAB_AB_LOSS_WEIGHT     = 5.0
     SSIM_LOSS_WEIGHT       = 4.5
     EDGE_LOSS_WEIGHT       = 30.0
+    COLOR_HIST_LOSS_WEIGHT = 0.5
 
     USE_AMP = True
     CUDNN_BENCHMARK = True

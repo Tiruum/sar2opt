@@ -3,7 +3,7 @@ import torch.optim as optim
 from models.generator import UNetGenerator
 from models.multiscale_discriminator import MultiscaleDiscriminator
 from models.losses import (
-    EdgeLoss, GANLoss, L1Loss, FeatureMatchingLoss,
+    ColorHistogramLoss, EdgeLoss, GANLoss, L1Loss, FeatureMatchingLoss,
     PerceptualLoss, LPIPSLoss,
     LabColorLoss, SSIMLoss, TVLoss
 )
@@ -32,7 +32,7 @@ def build_optimizers(netG, netD):
     optD = optim.Adam(netD.parameters(), lr=Config.LEARNING_RATE_D, betas=(Config.BETA1, Config.BETA2))
     return optG, optD
 
-def build_criterions(device) -> dict[Literal['GAN', 'L1', 'FM', 'Perceptual', 'LPIPS', 'Lab', 'SSIM', 'Edge', 'TV'], nn.Module]:
+def build_criterions(device) -> dict[Literal['GAN', 'L1', 'FM', 'Perceptual', 'LPIPS', 'Lab', 'SSIM', 'Edge', 'TV', 'Color_hist'], nn.Module]:
     crits = {}
     crits['GAN'] = GANLoss(use_lsgan=True).to(device)
     crits['L1'] = L1Loss().to(device)
@@ -43,6 +43,7 @@ def build_criterions(device) -> dict[Literal['GAN', 'L1', 'FM', 'Perceptual', 'L
     crits['SSIM'] = SSIMLoss().to(device)
     crits['Edge'] = EdgeLoss().to(device)
     crits['TV'] = TVLoss().to(device)
+    crits['Color_hist'] = ColorHistogramLoss().to(device)
     return crits
 
 def build_lr_schedulers(optG, optD):

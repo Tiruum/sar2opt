@@ -102,9 +102,6 @@ class UNetGenerator(nn.Module):
             nn.LeakyReLU(0.2, True),
             nn.ReflectionPad2d(3),
             nn.utils.spectral_norm(nn.Conv2d(ngf//2, output_nc, kernel_size=7, padding=0)),
-            nn.InstanceNorm2d(ngf//2),
-            nn.LeakyReLU(0.2, True),
-            nn.Conv2d(ngf//2, output_nc, kernel_size=1, padding=0),
             nn.Tanh()
         )
 
@@ -168,7 +165,7 @@ class UNetGenerator(nn.Module):
         y1 = torch.cat([y1, x1], dim=1)
         y1 = self.conv_after_cat1(y1)
         
-        with torch.cuda.amp.autocast(enabled=False):
+        with torch.amp.autocast('cuda', enabled=False):
             out = self.final(y1)
         return out
 
