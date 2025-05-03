@@ -37,7 +37,9 @@ class Config:
     LAB_AB_LOSS_WEIGHT     = 1.0
     SSIM_LOSS_WEIGHT       = 4.5
     EDGE_LOSS_WEIGHT       = 17.5
-    
+
+    USE_AMP = True
+    CUDNN_BENCHMARK = True
     DEVICE = 'cuda'
 
 config = Config()

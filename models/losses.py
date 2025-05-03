@@ -223,7 +223,6 @@ class TVLoss(nn.Module):
         tv_h = torch.mean(torch.abs(img[:, :, :-1, :] - img[:, :, 1:, :]))
         tv_w = torch.mean(torch.abs(img[:, :, :, :-1] - img[:, :, :, 1:]))
         return tv_h + tv_w
-
     
 if __name__ == "__main__":
     import torch
