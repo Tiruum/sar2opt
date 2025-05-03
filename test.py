@@ -8,11 +8,8 @@ from models.generator import UNetGenerator
 from utils import visualize_batch
 from utils.Dataset import test_loader
 from utils.Config import Config
-
-def load_checkpoint(model, checkpoint_path, device=Config.DEVICE):
-    checkpoint = torch.load(checkpoint_path, map_location=device)
-    model.load_state_dict(checkpoint['model_state_dict'])
-    return model
+from utils.Factory import build_models
+from utils.checkpoints import load_checkpoint
 
 def test():
     device = torch.device(Config.DEVICE)
@@ -24,6 +21,8 @@ def test():
         ngf=Config.NGF,
         n_blocks=8
     ).to(device)
+
+    netG, _ = build_models(device)
 
     # Путь к чекпоинту генератора
     checkpoint_path = os.path.join(Config.CHECKPOINTS_DIR, "netG_epoch_300.pth")  # укажи актуальный чекпоинт!

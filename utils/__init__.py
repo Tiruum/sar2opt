@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Literal, Union
 import torch
 import matplotlib.pyplot as plt
 import torchvision.transforms.functional as TF
@@ -91,14 +91,21 @@ def visualize_batch(
     else:
         raise ValueError("Invalid mode. Use 'quality' or 'fast'.")
     
-def sec2hhmmss(total_seconds: int) -> str:
+def sec2hhmmss(total_seconds: Union[float, int]) -> str:
     """
     Переводит целое число секунд в строку формата HH:mm:SS.
     
     Пример:
         sec2hhmmss(3661)  # → "01:01:01"
     """
+    total_seconds = int(total_seconds)
     hours = total_seconds // 3600
     minutes = (total_seconds % 3600) // 60
     seconds = total_seconds % 60
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+if __name__ == "__main__":
+    # Пример использования функции
+    total_seconds = 3661.12
+    formatted_time = sec2hhmmss(total_seconds)
+    print(f"Formatted time: {formatted_time}")  # Вывод: "01:01:01"

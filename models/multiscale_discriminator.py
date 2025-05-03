@@ -52,7 +52,9 @@ if __name__ == "__main__":
     x = torch.randn((batch_size, input_nc + output_nc, image_size, image_size))
 
     # Создаем многомасштабный дискриминатор
-    model = MultiscaleDiscriminator(input_nc=input_nc + output_nc, ndf=64, n_layers=1, num_D=4)
+    model = MultiscaleDiscriminator(
+        input_nc=input_nc + output_nc,
+        ndf=64, n_layers=3, num_D=4)
 
     # Прогоняем
     outputs = model(x)

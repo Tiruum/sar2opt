@@ -172,14 +172,29 @@ test_loader = DataLoader(
     prefetch_factor=Config.PREFETCH_FACTOR
 )
 
-all_indices = list(range(len(train_dataset)))
-mini_indices = random.sample(all_indices, 100)
-mini_dataset = Subset(train_dataset, mini_indices)
+all_train_indices = list(range(len(train_dataset)))
+mini_train_indices = random.sample(all_train_indices, 80)
+mini_train_dataset = Subset(train_dataset, mini_train_indices)
 
-mini_loader = DataLoader(
-    mini_dataset,
+all_test_indices = list(range(len(test_dataset)))
+mini_test_indices = random.sample(all_test_indices, 20)
+mini_test_dataset = Subset(test_dataset, mini_test_indices)
+
+
+mini_train_loader = DataLoader(
+    mini_train_dataset,
     batch_size=Config.BATCH_SIZE,
     shuffle=True,
+    num_workers=Config.NUM_WORKERS,
+    pin_memory=True,
+    persistent_workers=Config.PERSISTENT_WORKERS,
+    prefetch_factor=Config.PREFETCH_FACTOR
+)
+
+mini_test_loader = DataLoader(
+    mini_test_dataset,
+    batch_size=Config.BATCH_SIZE,
+    shuffle=False,
     num_workers=Config.NUM_WORKERS,
     pin_memory=True,
     persistent_workers=Config.PERSISTENT_WORKERS,

@@ -5,7 +5,7 @@ class Config:
     # Параметры обучения
     IMAGE_SIZE = 256
     BATCH_SIZE = 8
-    NUM_EPOCHS = 300
+    NUM_EPOCHS = 200
     LEARNING_RATE_G = 1e-4
     LEARNING_RATE_D = 2e-4
     BETA1 = 0.5  # для Adam оптимизатора
@@ -27,17 +27,17 @@ class Config:
     PERSISTENT_WORKERS = True,
     PREFETCH_FACTOR = 2 # 2
 
-    GAN_LOSS_WEIGHT        = 2.0
-    L1_LOSS_WEIGHT         = 80.0
+    GAN_LOSS_WEIGHT        = 1.0
+    L1_LOSS_WEIGHT         = 40.0
     FM_LOSS_WEIGHT         = 3.0
-    PERCEPTUAL_LOSS_WEIGHT = 0.7
-    LPIPS_LOSS_WEIGHT      = 0.5
+    PERCEPTUAL_LOSS_WEIGHT = 2.0
+    LPIPS_LOSS_WEIGHT      = 3.0
     TV_LOSS_WEIGHT         = 0.5
-    LAB_L_LOSS_WEIGHT      = 0.5
-    LAB_AB_LOSS_WEIGHT     = 0.5
-    SSIM_LOSS_WEIGHT       = 1.0
-    EDGE_LOSS_WEIGHT       = 1.0
-
+    LAB_L_LOSS_WEIGHT      = 0.8
+    LAB_AB_LOSS_WEIGHT     = 1.0
+    SSIM_LOSS_WEIGHT       = 4.5
+    EDGE_LOSS_WEIGHT       = 17.5
+    
     DEVICE = 'cuda'
 
 config = Config()

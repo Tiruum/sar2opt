@@ -2,94 +2,164 @@
 
 import os
 import torch
-import torch.nn as nn
-import torch.optim as optim
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
-import shutil
 from time import time
 
-from models.generator import UNetGenerator
-from models.multiscale_discriminator import MultiscaleDiscriminator
-from models.losses import (
-    EdgeLoss, GANLoss, L1Loss, FeatureMatchingLoss,
-    PerceptualLoss, LPIPSLoss,
-    LabColorLoss, SSIMLoss
-)
-
 from utils import sec2hhmmss, visualize_batch
-from utils.Dataset import train_loader, mini_loader
+from utils.Dataset import mini_train_loader, mini_test_loader
+# from utils.Dataset import train_loader, test_loader
 from utils.Config import Config
+from utils.Factory import build_criterions, build_models, build_optimizers
 from utils.Logger import Logger
+from utils.checkpoints import load_checkpoint, save_checkpoint
+
+train_loader = mini_train_loader
+test_loader = mini_test_loader
 
 logger = Logger(name="SAR2OPT")
 
-def save_checkpoint(model, optimizer, epoch, path):
-    torch.save({
-        'epoch': epoch,
-        'model_state_dict': model.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict(),
-    }, path)
+def train_epoch(netG, netD, optimizer_G, optimizer_D, crits, epoch, device):
+    netG.train()
+    netD.train()
 
-def total_variation_loss(img):
-    tv_h = torch.mean(torch.abs(img[:, :, :-1, :] - img[:, :, 1:, :]))
-    tv_w = torch.mean(torch.abs(img[:, :, :, :-1] - img[:, :, :, 1:]))
-    return tv_h + tv_w
+    total_g_loss = 0
+    total_d_loss = 0
 
-def load_checkpoint(model, optimizer, checkpoint_path, device):
-    checkpoint = torch.load(checkpoint_path, map_location=device)
-    model.load_state_dict(checkpoint['model_state_dict'])
-    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-    start_epoch = checkpoint['epoch'] + 1
-    return model, optimizer, start_epoch
+    progress_train = tqdm(train_loader, desc=f"Epoch {epoch+1}/{Config.NUM_EPOCHS} Train", ascii=" ▏▎▍▌▋▊▉█", smoothing=0.5)
+
+    for i, (real_sar, real_optical) in enumerate(progress_train):
+        real_sar = real_sar.to(device)
+        real_optical = real_optical.to(device)
+
+        # --------- Обновление дискриминатора ---------
+        netD.requires_grad_(True)
+        optimizer_D.zero_grad()
+
+        # Генерируем фейковое изображение
+        with torch.no_grad():
+            fake_optical = netG(real_sar)
+
+        # Конкатенируем SAR + Optical
+        fake_pair = torch.cat((real_sar, fake_optical), dim=1)
+        real_pair = torch.cat((real_sar, real_optical), dim=1)
+
+        pred_fake = netD(fake_pair)
+        pred_real = netD(real_pair)
+
+        # Считаем Loss дискриминатора
+        d_loss_fake = sum(crits['GAN'](fake, False) for fake in pred_fake)
+        d_loss_real = sum(crits['GAN'](real, True, real_label_smooth=0.9) for real in pred_real)
+
+        d_loss = (d_loss_fake + d_loss_real) * 0.5
+        d_loss.backward()
+        optimizer_D.step()
+
+        # --------- Обновление генератора ---------
+        netD.requires_grad_(False)
+        optimizer_G.zero_grad()
+
+        # Снова прогоняем (чтобы получить свежие данные после обновления дискриминатора)
+        fake_optical = netG(real_sar)
+        fake_pair = torch.cat((real_sar, fake_optical), dim=1)
+        pred_fake = netD(fake_pair)
+
+        g_gan_loss = sum(crits['GAN'](fake, True) for fake in pred_fake)                                    # GAN Loss генератора
+        l1_loss = crits['L1'](fake_optical, real_optical)                                                   # L1 Loss
+        fm_loss = sum(crits['FM']([fake], [real.detach()]) for fake, real in zip(pred_fake, pred_real))     # Feature Matching Loss
+        perceptual_loss = crits['Perceptual'](fake_optical, real_optical.detach())                          # Perceptual Loss
+        tv_loss = crits['TV'](fake_optical)                                                        # Total Variation Loss
+        lpips_loss = crits['LPIPS'](fake_optical, real_optical.detach())                                    # LPIPS Loss
+        lab_l, lab_ab = crits['Lab'](fake_optical, real_optical)                                            # LabColor (раздельно L и ab)
+        g_ssim = crits['SSIM'](fake_optical, real_optical)                                                  # SSIM (DSSIM)
+        edge_loss = crits['Edge'](fake_optical, real_optical)                                               # Edge Loss
+
+        # Общий Loss генератора
+        g_loss = g_gan_loss * Config.GAN_LOSS_WEIGHT + \
+                l1_loss * Config.L1_LOSS_WEIGHT + \
+                fm_loss * Config.FM_LOSS_WEIGHT + \
+                perceptual_loss * Config.PERCEPTUAL_LOSS_WEIGHT + \
+                tv_loss * Config.TV_LOSS_WEIGHT + \
+                lpips_loss * Config.LPIPS_LOSS_WEIGHT + \
+                lab_l * Config.LAB_L_LOSS_WEIGHT + \
+                lab_ab * Config.LAB_AB_LOSS_WEIGHT + \
+                g_ssim * Config.SSIM_LOSS_WEIGHT + \
+                edge_loss + Config.EDGE_LOSS_WEIGHT
+
+        g_loss.backward()
+        optimizer_G.step()
+
+        total_g_loss += g_loss.item()
+        total_d_loss += d_loss.item()
+
+        progress_train.set_postfix({
+            "G_loss": f"{g_loss.item():.4f}",
+            "D_loss": f"{d_loss.item():.4f}"
+        })
+
+    return {
+        'G_loss': total_g_loss / len(train_loader),
+        'D_loss': total_d_loss / len(train_loader),
+        'L1': l1_loss.item(),
+        'FM': fm_loss.item(),
+        'Perceptual': perceptual_loss.item(),
+        'LPIPS': lpips_loss.item(),
+        'TV': tv_loss.item(),
+        'GAN': g_gan_loss.item(),
+        'Lab_L': lab_l.item(), 
+        'Lab_ab': lab_ab.item(),
+        'SSIM': g_ssim.item(),
+        'Edge': edge_loss.item()
+    }
+
+def val_epoch(netG, crits, epoch, device):
+    netG.eval()
+    val_metrics = {
+        'FM': 0.0,
+        'L1': 0.0,
+        'Perceptual': 0.0,
+        'LPIPS': 0.0,
+        'Lab_L': 0.0,
+        'Lab_ab': 0.0,
+        'SSIM': 0.0,
+        'Edge': 0.0,
+        'TV': 0.0,
+    }
+    with torch.no_grad():
+        progress_test = tqdm(test_loader, desc=f"Epoch {epoch+1}/{Config.NUM_EPOCHS} Val", ascii=" ▏▎▍▌▋▊▉█", smoothing=0.5)
+        for real_sar, real_optical in progress_test:
+            real_sar = real_sar.to(device)
+            real_optical = real_optical.to(device)
+            fake_optical = netG(real_sar)
+
+            # Accumulate metrics
+            val_metrics['L1'] += crits['L1'](fake_optical, real_optical).item()
+            val_metrics['Perceptual'] += crits['Perceptual'](fake_optical, real_optical).item()
+            val_metrics['LPIPS'] += crits['LPIPS'](fake_optical, real_optical).item()
+            val_metrics['TV'] += crits['TV'](fake_optical).item()
+            l_l, l_ab = crits['Lab'](fake_optical, real_optical)
+            val_metrics['Lab_L'] += l_l.item()
+            val_metrics['Lab_ab'] += l_ab.item()
+            val_metrics['SSIM'] += crits['SSIM'](fake_optical, real_optical).item()
+            val_metrics['Edge'] += crits['Edge'](fake_optical, real_optical).item()
+
+    return val_metrics
+
 
 def train(run_name: str = None, resume_g_path: str = None, resume_d_path: str = None):
     device = torch.device(Config.DEVICE)
     if run_name is None:
         run_name = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
     log_dir = os.path.join(Config.RESULTS_DIR, 'logs', run_name)
-    
-    # Исправляем удаление директории
-    if os.path.exists(log_dir):
-        try:
-            shutil.rmtree(log_dir)
-        except PermissionError:
-            logger.warning(f"Не удалось удалить директорию {log_dir}. Логи будут добавлены к существующим.")
-    
     writer = SummaryWriter(log_dir=log_dir)
 
     # Инициализация моделей
-    netG = UNetGenerator(
-        input_nc=Config.INPUT_NC,
-        output_nc=Config.OUTPUT_NC,
-        ngf=Config.NGF,
-        n_blocks=8
-    ).to(device)
+    netG, netD = build_models(device)
+    optimizer_G, optimizer_D = build_optimizers(netG, netD)
+    crits = build_criterions(device)
 
-    netD = MultiscaleDiscriminator(
-        input_nc=Config.INPUT_NC + Config.OUTPUT_NC,
-        ndf=Config.NDF,
-        n_layers=3,
-        num_D=3
-    ).to(device)
-
-    # Лосс функции
-    criterionGAN = GANLoss(use_lsgan=True).to(device)
-    criterionL1 = L1Loss().to(device)
-    criterionFM = FeatureMatchingLoss().to(device)
-    criterionPerceptual = PerceptualLoss().to(device)
-    criterionLPIPS = LPIPSLoss().to(device)
-    criterionLab = LabColorLoss().to(device)
-    criterionSSIM = SSIMLoss().to(device)
-    criterionEdge = EdgeLoss(mode='sobel').to(device)
-
-    # Оптимизаторы
-    optimizer_G = optim.Adam(netG.parameters(), lr=Config.LEARNING_RATE_G, betas=(Config.BETA1, Config.BETA2))
-    optimizer_D = optim.Adam(netD.parameters(), lr=Config.LEARNING_RATE_D, betas=(Config.BETA1, Config.BETA2))
-
-    val_iter = iter(train_loader)
-    fixed_real_sar, fixed_real_optical = next(val_iter)
+    fixed_real_sar, fixed_real_optical = next(iter(train_loader))
     fixed_real_sar = fixed_real_sar.to(device)
     fixed_real_optical = fixed_real_optical.to(device)
 
@@ -105,103 +175,21 @@ def train(run_name: str = None, resume_g_path: str = None, resume_d_path: str = 
 
     # Основной цикл обучения
     for epoch in range(start_epoch, Config.NUM_EPOCHS):
-        netG.train()
-        netD.train()
+        # --- TRAIN LOOP ---
+        train_metrics = train_epoch(netG, netD, optimizer_G, optimizer_D, crits, epoch, device)
+        for name, value in train_metrics.items():
+            writer.add_scalar(f'Train/{name}', value, epoch)
 
-        total_g_loss = 0
-        total_d_loss = 0
-
-        progress_bar = tqdm(mini_loader, desc=f"Epoch {epoch+1}/{Config.NUM_EPOCHS}", ascii=" ▏▎▍▌▋▊▉█", smoothing=0.5)
-
-        for i, (real_sar, real_optical) in enumerate(progress_bar):
-            real_sar = real_sar.to(device)
-            real_optical = real_optical.to(device)
-
-            # --------- Обновление дискриминатора ---------
-            netD.requires_grad_(True)
-            optimizer_D.zero_grad()
-
-            # Генерируем фейковое изображение
-            with torch.no_grad():
-                fake_optical = netG(real_sar)
-
-            # Конкатенируем SAR + Optical
-            fake_pair = torch.cat((real_sar, fake_optical), dim=1)
-            real_pair = torch.cat((real_sar, real_optical), dim=1)
-
-            pred_fake = netD(fake_pair)
-            pred_real = netD(real_pair)
-
-            # Считаем Loss дискриминатора
-            d_loss_fake = sum(criterionGAN(fake, False) for fake in pred_fake)
-            d_loss_real = sum(criterionGAN(real, True, real_label_smooth=0.9) for real in pred_real)
-
-            d_loss = (d_loss_fake + d_loss_real) * 0.5
-            d_loss.backward()
-            optimizer_D.step()
-
-            # --------- Обновление генератора ---------
-            netD.requires_grad_(False)
-            optimizer_G.zero_grad()
-
-            # Снова прогоняем (чтобы получить свежие данные после обновления дискриминатора)
-            fake_optical = netG(real_sar)
-            fake_pair = torch.cat((real_sar, fake_optical), dim=1)
-            pred_fake = netD(fake_pair)
-
-            g_gan_loss = sum(criterionGAN(fake, True) for fake in pred_fake)                                    # GAN Loss генератора
-            l1_loss = criterionL1(fake_optical, real_optical)                                                   # L1 Loss
-            fm_loss = sum(criterionFM([fake], [real.detach()]) for fake, real in zip(pred_fake, pred_real))     # Feature Matching Loss
-            perceptual_loss = criterionPerceptual(fake_optical, real_optical.detach())                          # Perceptual Loss
-            tv_loss = total_variation_loss(fake_optical)                                                        # Total Variation Loss
-            lpips_loss = criterionLPIPS(fake_optical, real_optical.detach())                                    # LPIPS Loss
-            lab_l, lab_ab = criterionLab(fake_optical, real_optical)                                            # LabColor (раздельно L и ab)
-            g_ssim = criterionSSIM(fake_optical, real_optical)                                                  # SSIM (DSSIM)
-            edge_loss = criterionEdge(fake_optical, real_optical)                                               # Edge Loss
-
-            # Общий Loss генератора
-            gan_loss_weight = Config.GAN_LOSS_WEIGHT if epoch > 100 else Config.GAN_LOSS_WEIGHT*0.4  # Уменьшаем вес GAN Loss после 100 эпох
-            g_loss = g_gan_loss * gan_loss_weight + \
-                    l1_loss * Config.L1_LOSS_WEIGHT + \
-                    fm_loss * Config.FM_LOSS_WEIGHT + \
-                    perceptual_loss * Config.PERCEPTUAL_LOSS_WEIGHT + \
-                    tv_loss * Config.TV_LOSS_WEIGHT + \
-                    lpips_loss * Config.LPIPS_LOSS_WEIGHT + \
-                    lab_l * Config.LAB_L_LOSS_WEIGHT + \
-                    lab_ab * Config.LAB_AB_LOSS_WEIGHT + \
-                    g_ssim * Config.SSIM_LOSS_WEIGHT + \
-                    edge_loss + Config.EDGE_LOSS_WEIGHT
-
-            g_loss.backward()
-            optimizer_G.step()
-
-            total_g_loss += g_loss.item()
-            total_d_loss += d_loss.item()
-
-            progress_bar.set_postfix({
-                "G_loss": f"{g_loss.item():.4f}",
-                "D_loss": f"{d_loss.item():.4f}"
-            })
+        # --- VALIDATION LOOP ---
+        val_metrics = val_epoch(netG, crits, epoch, device)
+        for name, total in val_metrics.items():
+            avg = total / len(test_loader)
+            writer.add_scalar(f'Val/{name}', avg, epoch)
 
         # Сохранение чекпоинта
         if (epoch + 1) % 10 == 0:
             save_checkpoint(netG, optimizer_G, epoch, os.path.join(Config.CHECKPOINTS_DIR, f"netG_epoch_{epoch+1}.pth"))
             save_checkpoint(netD, optimizer_D, epoch, os.path.join(Config.CHECKPOINTS_DIR, f"netD_epoch_{epoch+1}.pth"))
-
-        # Запись в TensorBoard
-        writer.add_scalar('Loss/Generator', total_g_loss / len(train_loader), epoch)
-        writer.add_scalar('Loss/Discriminator', total_d_loss / len(train_loader), epoch)
-        writer.add_scalar('Loss/L1', l1_loss.item(), epoch)
-        writer.add_scalar('Loss/FeatureMatching', fm_loss.item(), epoch)
-        writer.add_scalar('Loss/Perceptual', perceptual_loss.item(), epoch)
-        writer.add_scalar('Loss/LPIPS', lpips_loss.item(), epoch)
-        writer.add_scalar('Loss/TotalVariation', tv_loss.item(), epoch)
-        writer.add_scalar('Loss/GAN', g_gan_loss.item(), epoch)
-        writer.add_scalar('Loss/Lab_L', lab_l.item(), epoch)
-        writer.add_scalar('Loss/Lab_ab', lab_ab.item(), epoch)
-        writer.add_scalar('Loss/SSIM', g_ssim.item(), epoch)
-        writer.add_scalar('Loss/TV', tv_loss.item(), epoch)
-        writer.add_scalar('Loss/Edge', edge_loss.item(), epoch)
 
         os.makedirs(f'{Config.RESULTS_DIR}/train', exist_ok=True)
         # Сохраняем одну сгенерированную картинку каждые 10 эпох
@@ -225,4 +213,4 @@ if __name__ == "__main__":
     start_time = time()
     logger.info(f"Начало обучения")
     train(run_name=args.run_name, resume_g_path=args.resume_g, resume_d_path=args.resume_d)
-    logger.success(f"Обучение  завершено ({sec2hhmmss(time() - start_time):.2f})")
+    logger.success(f"Обучение  завершено ({sec2hhmmss(time() - start_time)})")

@@ -204,6 +204,26 @@ class EdgeLoss(nn.Module):
         # считаем L1 по всем каналам и направлениям
         return self.l1(fake_grad, real_grad.detach())
 
+class TVLoss(nn.Module):
+    """Total Variation Loss для сглаживания изображений"""
+    def __init__(self):
+        super(TVLoss, self).__init__()
+        
+    def forward(self, img):
+        """
+        Вычисляет Total Variation Loss для изображения.
+        Это помогает сглаживать изображения, уменьшая разницу между соседними пикселями.
+        
+        Args:
+            img (torch.Tensor): Входное изображение формата (B, C, H, W)
+            
+        Returns:
+            torch.Tensor: Вычисленный TV Loss
+        """
+        tv_h = torch.mean(torch.abs(img[:, :, :-1, :] - img[:, :, 1:, :]))
+        tv_w = torch.mean(torch.abs(img[:, :, :, :-1] - img[:, :, :, 1:]))
+        return tv_h + tv_w
+
     
 if __name__ == "__main__":
     import torch
