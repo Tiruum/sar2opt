@@ -249,6 +249,29 @@ class ColorHistogramLoss(nn.Module):
             loss += torch.mean(torch.abs(torch.cumsum(fake_hist, 0) - torch.cumsum(real_hist, 0)))
         
         return loss / 3.0
+
+class PSNRMetric(nn.Module):
+    """Peak Signal-to-Noise Ratio метрика"""
+    def __init__(self, max_val=1.0):
+        super(PSNRMetric, self).__init__()
+        self.max_val = max_val
+        
+    def forward(self, fake, real):
+        # Преобразуем изображения из [-1, 1] в [0, 1]
+        fake_norm = (fake + 1) * 0.5
+        real_norm = (real + 1) * 0.5
+        
+        # Вычисляем MSE (Mean Squared Error)
+        mse = torch.mean((fake_norm - real_norm) ** 2)
+        
+        # Защита от деления на ноль
+        if mse < 1.0e-10:
+            return torch.tensor(100.0, device=fake.device)
+            
+        # Вычисляем PSNR
+        psnr = 20 * torch.log10(self.max_val / torch.sqrt(mse))
+        
+        return psnr
     
 if __name__ == "__main__":
     import torch

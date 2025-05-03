@@ -117,6 +117,7 @@ def train_epoch(
             g_ssim = crits['SSIM'](fake_optical, real_optical)                                                  # SSIM (DSSIM)
             edge_loss = crits['Edge'](fake_optical, real_optical)  
             color_hist_loss = crits['Color_hist'](fake_optical, real_optical)  # Color Histogram Loss
+            psnr = crits['PSNR'](fake_optical, real_optical)  # PSNR (для отладки)
 
             # Общий Loss генератора с весами
             g_loss = (
@@ -165,7 +166,8 @@ def train_epoch(
         'Lab_ab': lab_ab.item(),
         'SSIM': g_ssim.item(),
         'Edge': edge_loss.item(),
-        'Color_hist': color_hist_loss.item()
+        'Color_hist': color_hist_loss.item(),
+        'PSNR': psnr.item()
     }
 
 def val_epoch(
@@ -185,7 +187,8 @@ def val_epoch(
         'SSIM': 0.0,
         'Edge': 0.0,
         'TV': 0.0,
-        'Color_hist': 0.0
+        'Color_hist': 0.0,
+        'PSNR': 0.0
     }
 
     with torch.no_grad():
@@ -207,6 +210,7 @@ def val_epoch(
                 val_metrics['SSIM'] += crits['SSIM'](fake_optical, real_optical).item()
                 val_metrics['Edge'] += crits['Edge'](fake_optical, real_optical).item()
                 val_metrics['Color_hist'] += crits['Color_hist'](fake_optical, real_optical).item()
+                val_metrics['PSNR'] += crits['PSNR'](fake_optical, real_optical).item()
 
     return val_metrics
 
@@ -258,10 +262,11 @@ def train(
         scheduler_D.step()
 
         # --- VALIDATION LOOP ---
-        val_metrics = val_epoch(netG, crits, epoch, device, amp_device_type)
-        for name, total in val_metrics.items():
-            avg = total / len(test_loader)
-            writer.add_scalar(f'Val/{name}', avg, epoch)
+        if (epoch + 1) % 10 == 0:
+            val_metrics = val_epoch(netG, crits, epoch, device, amp_device_type)
+            for name, total in val_metrics.items():
+                avg = total / len(test_loader)
+                writer.add_scalar(f'Val/{name}', avg, epoch)
 
         if hasattr(torch.cuda, 'empty_cache'):
             torch.cuda.empty_cache()
