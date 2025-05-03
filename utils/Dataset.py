@@ -18,20 +18,23 @@ common_transform = A.Compose([
         border_mode=cv2.BORDER_REFLECT_101,
         p=0.9
     ),
+    A.OneOf([
+        A.Sharpen(alpha=(0.2, 0.5), lightness=(0.5, 1.0), p=1.0),
+    ], p=0.3),
     A.HorizontalFlip(p=0.5),
     A.VerticalFlip(p=0.5),
 ], additional_targets={'optical': 'image'})
 
 # Отдельные пайплайны для специфичных аугментаций
 sar_specific = A.Compose([
-    # 1) Случайный Gaussian Blur или Motion Blur
-    A.OneOf([
-        A.GaussianBlur(blur_limit=3, p=1.0),
-        A.MotionBlur(blur_limit=5, p=1.0),
-    ], p=0.3),
+    # # 1) Случайный Gaussian Blur или Motion Blur
+    # A.OneOf([
+    #     A.GaussianBlur(blur_limit=3, p=1.0),
+    #     A.MotionBlur(blur_limit=5, p=1.0),
+    # ], p=0.3),
 
-    # 2) Случайный гауссов шум
-    A.GaussNoise(std_range=(0.2, 0.44), p=0.5),
+    # # 2) Случайный гауссов шум
+    # A.GaussNoise(std_range=(0.2, 0.44), p=0.5),
 
     # # 3) Coarse Dropout — выкидываем случайные прямоугольники
     # A.CoarseDropout(max_holes=8, max_height=32, max_width=32, 

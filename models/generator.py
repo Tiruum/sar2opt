@@ -97,13 +97,23 @@ class UNetGenerator(nn.Module):
         # Final conv
         self.final = nn.Sequential(
             nn.ReflectionPad2d(3),
-            nn.utils.spectral_norm(nn.Conv2d(ngf, ngf//2, kernel_size=7, padding=0)),  # ngf -> ngf//2
+            nn.utils.spectral_norm(nn.Conv2d(ngf, ngf//2, kernel_size=7, padding=0)),
             nn.InstanceNorm2d(ngf//2),
             nn.LeakyReLU(0.2, True),
             nn.ReflectionPad2d(3),
             nn.utils.spectral_norm(nn.Conv2d(ngf//2, output_nc, kernel_size=7, padding=0)),
+            nn.InstanceNorm2d(ngf//2),
+            nn.LeakyReLU(0.2, True),
+            nn.Conv2d(ngf//2, output_nc, kernel_size=1, padding=0),
             nn.Tanh()
         )
+
+        # Инициализация весов
+        for m in self.final.modules():
+            if isinstance(m, nn.Conv2d) and m.out_channels == output_nc:
+                nn.init.normal_(m.weight, mean=0.0, std=0.005)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
 
         # В метод __init__ класса UNetGenerator, после определения self.conv_after_cat2:
         self.conv_after_cat3 = nn.Sequential(
@@ -158,7 +168,8 @@ class UNetGenerator(nn.Module):
         y1 = torch.cat([y1, x1], dim=1)
         y1 = self.conv_after_cat1(y1)
         
-        out = self.final(y1)
+        with torch.cuda.amp.autocast(enabled=False):
+            out = self.final(y1)
         return out
 
 if __name__ == "__main__":

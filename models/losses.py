@@ -223,6 +223,67 @@ class TVLoss(nn.Module):
         tv_h = torch.mean(torch.abs(img[:, :, :-1, :] - img[:, :, 1:, :]))
         tv_w = torch.mean(torch.abs(img[:, :, :, :-1] - img[:, :, :, 1:]))
         return tv_h + tv_w
+
+class GradientLoss(nn.Module):
+    """Лосс по градиентам для улучшения четкости деталей"""
+    def __init__(self):
+        super(GradientLoss, self).__init__()
+        self.sobel_x = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], 
+                                     dtype=torch.float32).view(1, 1, 3, 3)
+        self.sobel_y = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]], 
+                                     dtype=torch.float32).view(1, 1, 3, 3)
+        
+    def forward(self, fake, real):
+        self.sobel_x = self.sobel_x.to(fake.device)
+        self.sobel_y = self.sobel_y.to(fake.device)
+        
+        # Преобразуем в градации серого, если RGB
+        if fake.size(1) == 3:
+            fake_gray = 0.299 * fake[:, 0] + 0.587 * fake[:, 1] + 0.114 * fake[:, 2]
+            real_gray = 0.299 * real[:, 0] + 0.587 * real[:, 1] + 0.114 * real[:, 2]
+            fake_gray = fake_gray.unsqueeze(1)
+            real_gray = real_gray.unsqueeze(1)
+        else:
+            fake_gray = fake
+            real_gray = real
+            
+        # Вычисляем градиенты
+        fake_grad_x = F.conv2d(fake_gray, self.sobel_x, padding=1)
+        fake_grad_y = F.conv2d(fake_gray, self.sobel_y, padding=1)
+        real_grad_x = F.conv2d(real_gray, self.sobel_x, padding=1)
+        real_grad_y = F.conv2d(real_gray, self.sobel_y, padding=1)
+        
+        # Вычисляем силу градиента
+        fake_grad = torch.sqrt(fake_grad_x ** 2 + fake_grad_y ** 2 + 1e-8)
+        real_grad = torch.sqrt(real_grad_x ** 2 + real_grad_y ** 2 + 1e-8)
+        
+        return F.l1_loss(fake_grad, real_grad)
+
+class ColorHistogramLoss(nn.Module):
+    """Лосс для согласования цветовых гистограмм"""
+    def __init__(self, bins=64):
+        super(ColorHistogramLoss, self).__init__()
+        self.bins = bins
+        
+    def forward(self, fake, real):
+        # Нормализуем к [0,1]
+        fake_norm = (fake + 1) / 2.0
+        real_norm = (real + 1) / 2.0
+        
+        loss = 0
+        # Для каждого RGB-канала
+        for c in range(3):
+            fake_hist = torch.histc(fake_norm[:,c], bins=self.bins, min=0, max=1)
+            real_hist = torch.histc(real_norm[:,c], bins=self.bins, min=0, max=1)
+            
+            # Нормализуем гистограммы
+            fake_hist = fake_hist / (torch.sum(fake_hist) + 1e-8)
+            real_hist = real_hist / (torch.sum(real_hist) + 1e-8)
+            
+            # Earth Mover's Distance (приближение)
+            loss += torch.mean(torch.abs(torch.cumsum(fake_hist, 0) - torch.cumsum(real_hist, 0)))
+        
+        return loss / 3.0
     
 if __name__ == "__main__":
     import torch

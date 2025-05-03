@@ -14,7 +14,7 @@ from utils import sec2hhmmss, visualize_batch
 from utils.Dataset import mini_train_loader, mini_test_loader
 # from utils.Dataset import train_loader, test_loader
 from utils.Config import Config
-from utils.Factory import build_criterions, build_models, build_optimizers
+from utils.Factory import build_criterions, build_lr_schedulers, build_models, build_optimizers
 from utils.Logger import Logger
 from utils.checkpoints import load_checkpoint, save_checkpoint
 
@@ -63,6 +63,10 @@ def train_epoch(
         # Генерируем фейковое изображение
         with torch.no_grad(), autocast(device_type=amp_device_type, enabled=Config.USE_AMP):
             fake_optical = netG(real_sar)
+        
+        # Если используем AMP, принудительно приводим к float32 для правильной цветопередачи
+        if Config.USE_AMP:
+            fake_optical = fake_optical.float()
 
         with autocast(device_type=amp_device_type, enabled=Config.USE_AMP):
             # Конкатенируем SAR + Optical
@@ -94,6 +98,11 @@ def train_epoch(
         with autocast(device_type=amp_device_type, enabled=Config.USE_AMP):
             # Снова прогоняем (чтобы получить свежие данные после обновления дискриминатора)
             fake_optical = netG(real_sar)
+            
+            # Если используем AMP, принудительно приводим к float32 для правильной цветопередачи
+            if Config.USE_AMP:
+                fake_optical = fake_optical.float()
+
             fake_pair = torch.cat((real_sar, fake_optical), dim=1)
             pred_fake = netD(fake_pair)
 
@@ -217,6 +226,7 @@ def train(
     netG, netD = build_models(device)
     optimizer_G, optimizer_D = build_optimizers(netG, netD)
     crits = build_criterions(device)
+    scheduler_G, scheduler_D = build_lr_schedulers(optimizer_G, optimizer_D)
 
     # Подготовка фиксированного набора данных для визуализации
     fixed_real_sar, fixed_real_optical = next(iter(train_loader))
@@ -240,6 +250,8 @@ def train(
         train_metrics = train_epoch(netG, netD, optimizer_G, optimizer_D, crits, epoch, device, amp_device_type)
         for name, value in train_metrics.items():
             writer.add_scalar(f'Train/{name}', value, epoch)
+        scheduler_G.step()
+        scheduler_D.step()
 
         # --- VALIDATION LOOP ---
         val_metrics = val_epoch(netG, crits, epoch, device, amp_device_type)
