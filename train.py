@@ -12,7 +12,7 @@ from torch.amp import autocast, GradScaler
 
 from utils import sec2hhmmss, visualize_batch
 from utils.Dataset import mini_train_loader, mini_test_loader
-from utils.Dataset import train_loader, test_loader
+# from utils.Dataset import train_loader, test_loader
 from utils.Config import Config
 from utils.Factory import build_criterions, build_models, build_optimizers
 from utils.Logger import Logger
@@ -20,8 +20,8 @@ from utils.checkpoints import load_checkpoint, save_checkpoint
 
 torch.backends.cudnn.benchmark = Config.CUDNN_BENCHMARK
 
-# train_loader = mini_train_loader
-# test_loader = mini_test_loader
+train_loader = mini_train_loader
+test_loader = mini_test_loader
 
 logger = Logger(name="SAR2OPT")
 
@@ -50,7 +50,7 @@ def train_epoch(
 
     scaler = GradScaler(enabled=Config.USE_AMP)
 
-    progress_train = tqdm(train_loader, desc=f"Epoch {epoch+1}/{Config.NUM_EPOCHS} Train", ascii=" ▏▎▍▌▋▊▉█", smoothing=0.5)
+    progress_train = tqdm(train_loader, desc=f"Epoch {epoch+1}/{Config.NUM_EPOCHS} Train", ascii=" ▏▎▍▌▋▊▉█", smoothing=0.5, leave=False)
 
     for i, (real_sar, real_optical) in enumerate(progress_train):
         real_sar = real_sar.to(device, memory_format=torch.channels_last)
@@ -177,7 +177,7 @@ def val_epoch(
     }
 
     with torch.no_grad():
-        progress_test = tqdm(test_loader, desc=f"Epoch {epoch+1}/{Config.NUM_EPOCHS} Val", ascii=" ▏▎▍▌▋▊▉█", smoothing=0.5)
+        progress_test = tqdm(test_loader, desc=f"Epoch {epoch+1}/{Config.NUM_EPOCHS} Val", ascii=" ▏▎▍▌▋▊▉█", smoothing=0.5, leave=False)
         for real_sar, real_optical in progress_test:
             real_sar = real_sar.to(device, memory_format=torch.channels_last)
             real_optical = real_optical.to(device, memory_format=torch.channels_last)

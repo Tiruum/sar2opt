@@ -24,7 +24,7 @@ common_transform = A.Compose([
 
 # Отдельные пайплайны для специфичных аугментаций
 sar_specific = A.Compose([
-    # # 1) Случайный Gaussian Blur или Motion Blur
+    # 1) Случайный Gaussian Blur или Motion Blur
     A.OneOf([
         A.GaussianBlur(blur_limit=3, p=1.0),
         A.MotionBlur(blur_limit=5, p=1.0),
