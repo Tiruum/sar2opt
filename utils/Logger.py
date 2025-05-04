@@ -1,6 +1,7 @@
 import sys
 import datetime
 from colorama import init, Fore, Style
+from tqdm import tqdm
 
 # Инициализация colorama
 init(autoreset=True)
@@ -32,7 +33,7 @@ class Logger:
         lvl = self.LEVELS.get(level, self.LEVELS['info'])
         parts = [
             Style.DIM + now,
-            lvl['color'] + lvl['emoji'] + ' ' + level.upper(),
+            lvl['color'] + ' ' + lvl['emoji'] + ' ' + level.upper(),
         ]
         if self.name:
             parts.append(Style.BRIGHT + f"[{self.name}]")

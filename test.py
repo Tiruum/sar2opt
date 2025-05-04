@@ -4,29 +4,22 @@ import os
 import torch
 from tqdm import tqdm
 
-from models.generator import UNetGenerator
 from utils import visualize_batch
 from utils.Dataset import test_loader
 from utils.Config import Config
-from utils.Factory import build_models
+from utils.Factory import build_models, build_optimizers
 from utils.checkpoints import load_checkpoint
 
 def test():
     device = torch.device(Config.DEVICE)
 
     # Инициализируем генератор
-    netG = UNetGenerator(
-        input_nc=Config.INPUT_NC,
-        output_nc=Config.OUTPUT_NC,
-        ngf=Config.NGF,
-        n_blocks=8
-    ).to(device)
-
-    netG, _ = build_models(device)
+    netG, netD = build_models(device)
+    optG, optD = build_optimizers(netG, netD)
 
     # Путь к чекпоинту генератора
-    checkpoint_path = os.path.join(Config.CHECKPOINTS_DIR, "netG_epoch_300.pth")  # укажи актуальный чекпоинт!
-    netG = load_checkpoint(netG, checkpoint_path, device)
+    checkpoint_path = os.path.join(Config.CHECKPOINTS_DIR, "netG_epoch_100.pth")  # укажи актуальный чекпоинт!
+    netG, _, _ = load_checkpoint(netG, optG, checkpoint_path, device)
     netG.eval()
 
     # Создаем директории для сохранения результатов

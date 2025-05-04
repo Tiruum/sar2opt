@@ -9,6 +9,7 @@ import lpips
 from kornia.filters import spatial_gradient
 import kornia.color as Kc
 from kornia.losses import ssim_loss
+import kornia.filters as KF
 
 class GANLoss(nn.Module):
     """
@@ -272,6 +273,39 @@ class PSNRMetric(nn.Module):
         psnr = 20 * torch.log10(self.max_val / torch.sqrt(mse))
         
         return psnr
+
+class FrequencyLoss(nn.Module):
+    """
+    Функция потерь для сохранения высоких частот изображения,
+    что помогает улучшить детализацию и четкость мелких элементов.
+    """
+    def __init__(self):
+        super(FrequencyLoss, self).__init__()
+        self.l1 = nn.L1Loss()
+        # Создаем ядра высокочастотных фильтров
+        self.laplacian_kernel = torch.tensor([
+            [0, 1, 0],
+            [1, -4, 1],
+            [0, 1, 0]
+        ], dtype=torch.float32).view(1, 1, 3, 3)
+        
+    def forward(self, fake, real):
+        # Преобразуем в grayscale для упрощения
+        fake_gray = 0.299 * fake[:, 0] + 0.587 * fake[:, 1] + 0.114 * fake[:, 2]
+        real_gray = 0.299 * real[:, 0] + 0.587 * real[:, 1] + 0.114 * real[:, 2]
+        
+        fake_gray = fake_gray.unsqueeze(1)  # [B, 1, H, W]
+        real_gray = real_gray.unsqueeze(1)  # [B, 1, H, W]
+        
+        # Применяем лапласиан для выделения высоких частот
+        laplacian_kernel = self.laplacian_kernel.squeeze(0)
+        fake_lap = KF.filter2d(fake_gray, laplacian_kernel)
+        real_lap = KF.filter2d(real_gray, laplacian_kernel)
+        
+        # L1 потеря между высокочастотными компонентами
+        high_freq_loss = self.l1(fake_lap, real_lap)
+        
+        return high_freq_loss
     
 if __name__ == "__main__":
     import torch

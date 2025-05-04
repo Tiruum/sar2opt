@@ -18,6 +18,11 @@ from utils.Factory import build_criterions, build_lr_schedulers, build_models, b
 from utils.Logger import Logger
 from utils.checkpoints import load_checkpoint, save_checkpoint
 
+import warnings
+
+warnings.filterwarnings("ignore", category=UserWarning, module="torchvision") # torchvision pretrained warning
+warnings.filterwarnings("ignore", category=FutureWarning, module="lpips") # lpips torch.load warning
+
 torch.backends.cudnn.benchmark = Config.CUDNN_BENCHMARK
 
 train_loader = mini_train_loader
@@ -118,6 +123,7 @@ def train_epoch(
             edge_loss = crits['Edge'](fake_optical, real_optical)  
             color_hist_loss = crits['Color_hist'](fake_optical, real_optical)  # Color Histogram Loss
             psnr = crits['PSNR'](fake_optical, real_optical)  # PSNR (для отладки)
+            frequency_loss = crits['Frequency'](fake_optical, real_optical)  # Добавляем высокочастотную потерю
 
             # Общий Loss генератора с весами
             g_loss = (
@@ -131,7 +137,8 @@ def train_epoch(
                 lab_ab * Config.LAB_AB_LOSS_WEIGHT +
                 g_ssim * Config.SSIM_LOSS_WEIGHT +
                 edge_loss * Config.EDGE_LOSS_WEIGHT +
-                color_hist_loss * Config.COLOR_HIST_LOSS_WEIGHT
+                color_hist_loss * Config.COLOR_HIST_LOSS_WEIGHT +
+                frequency_loss * Config.FREQUENCY_LOSS_WEIGHT
             )
             
             # Проверка на NaN/Inf
@@ -167,6 +174,7 @@ def train_epoch(
         'SSIM': g_ssim.item(),
         'Edge': edge_loss.item(),
         'Color_hist': color_hist_loss.item(),
+        'Frequency': frequency_loss.item(),  # Отслеживаем новую потерю
         'PSNR': psnr.item()
     }
 
@@ -188,6 +196,7 @@ def val_epoch(
         'Edge': 0.0,
         'TV': 0.0,
         'Color_hist': 0.0,
+        'Frequency': 0.0,  # Добавляем в валидацию
         'PSNR': 0.0
     }
 
@@ -210,6 +219,7 @@ def val_epoch(
                 val_metrics['SSIM'] += crits['SSIM'](fake_optical, real_optical).item()
                 val_metrics['Edge'] += crits['Edge'](fake_optical, real_optical).item()
                 val_metrics['Color_hist'] += crits['Color_hist'](fake_optical, real_optical).item()
+                val_metrics['Frequency'] += crits['Frequency'](fake_optical, real_optical).item()
                 val_metrics['PSNR'] += crits['PSNR'](fake_optical, real_optical).item()
 
     return val_metrics
@@ -276,8 +286,8 @@ def train(
             save_checkpoint(netG, optimizer_G, epoch, os.path.join(Config.CHECKPOINTS_DIR, f"netG_epoch_{epoch+1}.pth"))
             save_checkpoint(netD, optimizer_D, epoch, os.path.join(Config.CHECKPOINTS_DIR, f"netD_epoch_{epoch+1}.pth"))
 
-        os.makedirs(f'{Config.RESULTS_DIR}/train', exist_ok=True)
         # Сохраняем одну сгенерированную картинку каждые 10 эпох
+        os.makedirs(f'{Config.RESULTS_DIR}/train', exist_ok=True)
         if (epoch + 1) % 10 == 0:
             netG.eval()
             with torch.no_grad():
@@ -304,6 +314,8 @@ if __name__ == "__main__":
     try:
         train(run_name=args.run_name, resume_g_path=args.resume_g, resume_d_path=args.resume_d)
         logger.success(f"Обучение  завершено ({sec2hhmmss(time() - start_time)})")
+    except KeyboardInterrupt:
+        logger.warning("Обучение прервано пользователем")
     except Exception as e:
         logger.error(f"Ошибка при обучении: {str(e)}")
         raise

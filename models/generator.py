@@ -97,7 +97,10 @@ class UNetGenerator(nn.Module):
         # Final conv
         self.final = nn.Sequential(
             nn.ReflectionPad2d(3),
-            nn.utils.spectral_norm(nn.Conv2d(ngf, ngf//2, kernel_size=7, padding=0)),
+            nn.utils.spectral_norm(nn.Conv2d(ngf, ngf, kernel_size=7, padding=0)),  # Увеличиваем каналы
+            nn.InstanceNorm2d(ngf),
+            nn.LeakyReLU(0.2, True),
+            nn.utils.spectral_norm(nn.Conv2d(ngf, ngf//2, kernel_size=3, padding=1)),  # Добавляем свертку 3х3
             nn.InstanceNorm2d(ngf//2),
             nn.LeakyReLU(0.2, True),
             nn.ReflectionPad2d(3),
